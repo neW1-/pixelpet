@@ -1,0 +1,18 @@
+{
+  "schema": 1,
+  "id": "dino",
+  "display_name": "Dino",
+  "size": [
+    32,
+    32
+  ],
+  "states": {
+    "idle": "gifs/idle.gif",
+    "working": "gifs/working.gif",
+    "needs_input": "gifs/needs_input.gif",
+    "permission_required": "gifs/permission_required.gif",
+    "done": "gifs/done.gif",
+    "failed_offline": "gifs/failed_offline.gif"
+  }
+}
+

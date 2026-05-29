@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pixelpet"
+version = "0.1.0"
+description = "Codex Desktop status pet for 32x32 iPixel LED displays."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+  "pypixelcolor>=0.4.0",
+  "Pillow>=10"
+]
+
+[project.scripts]
+pixelpet = "pixelpet.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+

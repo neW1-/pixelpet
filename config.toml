@@ -1,0 +1,14 @@
+[display]
+address = "7D157B3A-F9F5-06B7-DEC5-A962DAAB7E72"
+brightness = 50
+
+[pet]
+id = "hal"
+assets_dir = "/Users/martin/Documents/PixelPet/assets/pets"
+
+[daemon]
+poll_seconds = 3
+done_timeout_seconds = 10
+
+[codex]
+home = "/Users/martin/.codex"
