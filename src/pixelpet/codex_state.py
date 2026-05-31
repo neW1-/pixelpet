@@ -22,6 +22,7 @@ class StatusSnapshot:
     thread_id: str | None = None
     title: str | None = None
     updated_at_ms: int | None = None
+    activity: str | None = None
 
 
 @dataclass(frozen=True)
@@ -77,7 +78,11 @@ class CodexStateReader:
         try:
             rows = self._read_rows(max(limit * 2, limit))
         except Exception as exc:
-            return StatusSnapshot(Status.FAILED_OFFLINE, f"Codex state unavailable: {exc}")
+            return StatusSnapshot(
+                Status.FAILED_OFFLINE,
+                f"Codex state unavailable: {exc}",
+                activity="FAILED",
+            )
 
         now = self._now_ms()
         snapshots: list[StatusSnapshot] = []
@@ -86,14 +91,15 @@ class CodexStateReader:
             snapshots.append(summarize_thread(row, events, now, self.done_timeout_ms, self.active_window_ms))
 
         if not snapshots:
-            return StatusSnapshot(Status.IDLE, "No Codex Desktop threads found.")
+            return StatusSnapshot(
+                Status.IDLE,
+                "No Codex Desktop threads found.",
+                activity="IDLE",
+            )
 
         return max(
             snapshots,
-            key=lambda item: (
-                status_priority(item.status),
-                item.updated_at_ms or 0,
-            ),
+            key=status_sort_key,
         )
 
     def _read_rows(self, limit: int) -> list[ThreadRow]:
@@ -160,6 +166,7 @@ def summarize_thread(
             row.id,
             title,
             updated_at_ms,
+            "NEEDS APPROVAL",
         )
 
     needs_input = next((call for call in pending if is_input_call(call)), None)
@@ -170,6 +177,7 @@ def summarize_thread(
             row.id,
             title,
             updated_at_ms,
+            "WAITING INPUT",
         )
 
     lifecycle = latest_turn_lifecycle(events)
@@ -179,7 +187,8 @@ def summarize_thread(
             lifecycle.terminal_reason or "Latest Codex turn was aborted.",
             row.id,
             title,
-            updated_at_ms,
+            lifecycle.completed_at_ms or updated_at_ms,
+            "FAILED",
         )
 
     if lifecycle.completed_at_ms and now_ms - lifecycle.completed_at_ms <= done_timeout_ms:
@@ -189,6 +198,7 @@ def summarize_thread(
             row.id,
             title,
             lifecycle.completed_at_ms,
+            "DONE",
         )
 
     has_recent_activity = updated_at_ms > 0 and now_ms - updated_at_ms <= active_window_ms
@@ -200,9 +210,17 @@ def summarize_thread(
             row.id,
             title,
             updated_at_ms,
+            activity_for_call(pending[-1]) if pending else "THINKING",
         )
 
-    return StatusSnapshot(Status.IDLE, "No active Codex work.", row.id, title, updated_at_ms)
+    return StatusSnapshot(Status.IDLE, "No active Codex work.", row.id, title, updated_at_ms, "IDLE")
+
+
+def status_sort_key(snapshot: StatusSnapshot) -> tuple[int, int, int]:
+    updated_at_ms = snapshot.updated_at_ms or 0
+    if snapshot.status in {Status.PERMISSION_REQUIRED, Status.NEEDS_INPUT}:
+        return 3, status_priority(snapshot.status), updated_at_ms
+    return 2, updated_at_ms, status_priority(snapshot.status)
 
 
 def is_desktop_row(row: ThreadRow) -> bool:
@@ -267,7 +285,8 @@ def pending_calls(events: list[dict[str, Any]]) -> list[PendingCall]:
 
 
 def is_input_call(call: PendingCall) -> bool:
-    return call.name in {"request_user_input", "requestUserInput"}
+    normalized = call.name.replace(".", "_").lower()
+    return normalized.endswith("request_user_input") or normalized.endswith("requestuserinput")
 
 
 def is_permission_call(call: PendingCall) -> bool:
@@ -291,6 +310,89 @@ def input_reason(call: PendingCall) -> str:
         first = as_dict(questions[0])
         return string_value(first.get("question")) or "Codex is waiting for your input."
     return "Codex is waiting for your input."
+
+
+def activity_for_call(call: PendingCall) -> str:
+    if is_permission_call(call):
+        return "NEEDS APPROVAL"
+    if is_input_call(call):
+        return "WAITING INPUT"
+
+    name = call.name.lower()
+    nested_activity = activity_for_nested_tool(call)
+    if nested_activity:
+        return nested_activity
+
+    if name.endswith("exec_command") or name.endswith("shell_command"):
+        return activity_for_command(call.arguments)
+    if name.endswith("apply_patch"):
+        return "PATCHING"
+    if any(part in name for part in ("read", "open", "find", "list", "grep", "sed", "cat", "rg", "nl", "view")):
+        return "READING FILES"
+    if any(part in name for part in ("search", "query", "web", "browser", "curl")):
+        return "SEARCHING WEB"
+    if "image" in name:
+        return "MAKING IMAGE"
+    if "automation" in name:
+        return "AUTOMATION"
+    return "USING TOOL"
+
+
+def activity_for_nested_tool(call: PendingCall) -> str | None:
+    tool_uses = call.arguments.get("tool_uses")
+    if not isinstance(tool_uses, list):
+        return None
+
+    for item in reversed(tool_uses):
+        tool = as_dict(item)
+        name = string_value(tool.get("recipient_name")) or string_value(tool.get("name"))
+        if not name:
+            continue
+        nested = PendingCall(
+            call_id=call.call_id,
+            name=name,
+            timestamp_ms=call.timestamp_ms,
+            arguments=as_dict(tool.get("parameters")),
+        )
+        return activity_for_call(nested)
+    return "RUNNING TOOLS"
+
+
+def activity_for_command(arguments: dict[str, Any]) -> str:
+    command = string_value(arguments.get("cmd")) or string_value(arguments.get("command"))
+    normalized = command.lower()
+    first_word = normalized.split(maxsplit=1)[0] if normalized.split() else ""
+    if "pixelpet pets validate" in normalized:
+        return "VALIDATING PET"
+    if "pixelpet show" in normalized or "pixelpet run" in normalized:
+        return "TESTING DISPLAY"
+    if any(term in normalized for term in ("pytest", "unittest", "go test", "cargo test", "npm test", "pnpm test", "yarn test")):
+        return "RUNNING TESTS"
+    if " test" in normalized or normalized.startswith("test "):
+        return "RUNNING TESTS"
+    if any(term in normalized for term in ("ruff", "mypy", "lint", "compileall", "validate")):
+        return "CHECKING CODE"
+    if any(term in normalized for term in ("npm run build", "pnpm build", "yarn build", "cargo build", "make ")):
+        return "BUILDING"
+    if any(term in normalized for term in ("pip install", "npm install", "pnpm install", "uv sync")):
+        return "INSTALLING"
+    if normalized.startswith("gh run"):
+        return "CHECKING CI"
+    if normalized.startswith("gh pr create"):
+        return "CREATING PR"
+    if normalized.startswith("gh "):
+        return "CHECKING GITHUB"
+    if normalized.startswith("git status") or normalized.startswith("git diff") or normalized.startswith("git log") or normalized.startswith("git show"):
+        return "CHECKING GIT"
+    if normalized.startswith("git "):
+        return "UPDATING GIT"
+    if first_word in {"rg", "grep", "sed", "cat", "nl", "ls", "find", "wc"}:
+        return "READING FILES"
+    if first_word in {"curl", "wget"}:
+        return "FETCHING WEB"
+    if normalized.startswith("npm start") or "npm run dev" in normalized or "pnpm dev" in normalized or "yarn dev" in normalized:
+        return "RUNNING APP"
+    return "RUNNING CMD"
 
 
 def latest_turn_lifecycle(events: list[dict[str, Any]]) -> TurnLifecycle:

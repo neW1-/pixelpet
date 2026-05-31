@@ -5,6 +5,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from PIL import Image, ImageSequence
+
 from pixelpet.pet_pack import create_pet_pack, load_pet
 from pixelpet.status import REQUIRED_STATUSES
 
@@ -36,7 +38,17 @@ class PetPackTest(unittest.TestCase):
 
             self.assertEqual(pet.validate(check_images=False), [])
 
+    def test_builtin_hal_approval_is_animated(self) -> None:
+        path = Path(__file__).resolve().parents[1] / "assets" / "pets" / "hal" / "gifs" / "permission_required.gif"
+
+        with Image.open(path) as image:
+            frames = [frame.convert("RGB") for frame in ImageSequence.Iterator(image)]
+
+        first = frames[0].tobytes()
+        different_frames = [frame for frame in frames[1:] if frame.tobytes() != first]
+        self.assertGreaterEqual(len(frames), 4)
+        self.assertGreaterEqual(len(different_frames), 1)
+
 
 if __name__ == "__main__":
     unittest.main()
-

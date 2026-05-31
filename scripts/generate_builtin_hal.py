@@ -69,7 +69,7 @@ def draw_status_badge(draw: ImageDraw.ImageDraw, status: str, step: int) -> None
         for idx, point in enumerate(points):
             color = CYAN if idx == step % 4 else (18, 70, 88)
             rect(draw, point[0], point[1], point[0] + 1, point[1] + 1, color)
-        px(draw, 4, 4, BLUE)
+        rect(draw, 4, 4, 5, 5, BLUE)
     elif status == "needs_input":
         rect(draw, 0, 0, 9, 9, BLUE)
         rect(draw, 1, 1, 8, 8, BLACK)
@@ -141,7 +141,7 @@ def draw_scan(draw: ImageDraw.ImageDraw, step: int, color: tuple[int, int, int] 
 
 
 def draw_tick_marks(draw: ImageDraw.ImageDraw, step: int, color: tuple[int, int, int]) -> None:
-    for x, y in ((15, 13), (24, 13), (28, 20), (24, 28), (15, 28), (11, 20)):
+    for x, y in ((15, 13), (24, 13), (27, 20), (24, 28), (15, 28), (12, 20)):
         px(draw, x, y, color)
 
 
@@ -164,12 +164,26 @@ def frame(status: str, step: int) -> Image.Image:
         draw_tick_marks(draw, step, BLUE)
     elif status == "permission_required":
         draw_body(draw)
-        draw_lens(draw, pulse=0)
-        draw_tick_marks(draw, step, ORANGE)
+        pulse = 1 if step % 2 == 0 else 0
+        draw_lens(draw, pulse=pulse)
+        tick_color = ORANGE if step % 2 == 0 else (120, 62, 12)
+        draw_tick_marks(draw, step, tick_color)
+        if step % 4 in {0, 1}:
+            px(draw, 12, 14, ORANGE)
+            px(draw, 27, 27, ORANGE)
+        else:
+            px(draw, 27, 14, ORANGE)
+            px(draw, 12, 27, ORANGE)
     elif status == "done":
         draw_body(draw)
-        draw_lens(draw, pulse=1)
-        draw_tick_marks(draw, step, GREEN)
+        draw_lens(draw, pulse=1 if step % 2 == 0 else 0)
+        draw_tick_marks(draw, step, GREEN if step % 2 == 0 else (28, 120, 54))
+        if step % 4 in {0, 1}:
+            px(draw, 14, 14, GREEN)
+            px(draw, 25, 14, GREEN)
+        if step % 4 in {2, 3}:
+            px(draw, 14, 27, GREEN)
+            px(draw, 25, 27, GREEN)
     elif status == "failed_offline":
         draw_body(draw)
         draw_lens(draw, pulse=0, dim=True, shutter=1 if step % 2 else 0)

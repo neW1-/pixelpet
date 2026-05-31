@@ -4,11 +4,13 @@ import argparse
 import asyncio
 from pathlib import Path
 
-from .config import RuntimeConfig, default_assets_dir, load_config, merge_overrides
+from .config import RuntimeConfig, default_assets_dir, default_config_path, load_config, merge_overrides
 from .codex_state import CodexStateReader
 from .daemon import PixelPetDaemon
 from .led_driver import DisplayError, DryRunDisplay, PixelDisplay
+from .marquee import render_status_gif
 from .pet_pack import PetPackError, create_pet_pack, list_pets, load_pet
+from .playback import gif_frame_sequence
 from .status import REQUIRED_STATUSES, Status
 
 
@@ -33,11 +35,16 @@ def build_parser() -> argparse.ArgumentParser:
     add_common_config_flags(run)
     run.add_argument("--address", help="Bluetooth address of the iPixel display.")
     run.add_argument("--brightness", type=int, help="Fixed display brightness.")
+    run.add_argument("--save-slot", type=int, help="Save GIFs to this display slot before showing them.")
+    run.add_argument("--playback", choices=["gif", "stream"], help="Display playback mode.")
+    run.add_argument("--stream-frame-ms", type=int, help="Frame cadence for stream playback.")
     run.add_argument("--pet", dest="pet_id", help="Pet id to use.")
     run.add_argument("--assets-dir", type=Path, help="Directory containing pet packs.")
     run.add_argument("--codex-home", type=Path, help="Codex home directory.")
     run.add_argument("--poll-seconds", type=float, help="Polling interval.")
     run.add_argument("--done-timeout-seconds", type=float, help="How long done stays visible.")
+    run.add_argument("--no-hot-reload", action="store_true", help="Disable config hot reload while running.")
+    run.add_argument("--no-replay-gifs", action="store_true", help="Disable re-sending unchanged GIFs after they finish.")
     run.add_argument("--dry-run", action="store_true", help="Print status changes without display hardware.")
     run.add_argument("--once", action="store_true", help="Send one status GIF and exit.")
     run.set_defaults(func=run_daemon)
@@ -53,8 +60,12 @@ def build_parser() -> argparse.ArgumentParser:
     show.add_argument("status", choices=[status.value for status in REQUIRED_STATUSES])
     show.add_argument("--address", help="Bluetooth address of the iPixel display.")
     show.add_argument("--brightness", type=int, help="Fixed display brightness.")
+    show.add_argument("--save-slot", type=int, help="Save GIFs to this display slot before showing them.")
+    show.add_argument("--playback", choices=["gif", "stream"], help="Display playback mode.")
+    show.add_argument("--stream-frame-ms", type=int, help="Frame cadence for stream playback.")
     show.add_argument("--pet", dest="pet_id", help="Pet id to use.")
     show.add_argument("--assets-dir", type=Path, help="Directory containing pet packs.")
+    show.add_argument("--message", help="Marquee message to render.")
     show.add_argument("--dry-run", action="store_true", help="Print the GIF path without display hardware.")
     show.set_defaults(func=show_explicit_status)
 
@@ -97,8 +108,53 @@ def run_daemon(args: argparse.Namespace) -> int:
     if args.once:
         asyncio.run(daemon.run_once())
     else:
-        asyncio.run(daemon.run_forever())
+        asyncio.run(run_with_hot_reload(args, daemon))
     return 0
+
+
+async def run_with_hot_reload(args: argparse.Namespace, daemon: PixelPetDaemon) -> None:
+    config_path = args.config or default_config_path()
+    config_stamp = file_stamp(config_path)
+
+    await daemon.display.connect()
+    try:
+        while True:
+            await daemon.tick()
+            await asyncio.sleep(daemon.sleep_seconds())
+            if daemon.config.hot_reload:
+                config_stamp = await reload_config_if_changed(args, daemon, config_path, config_stamp)
+    finally:
+        await daemon.display.disconnect()
+
+
+async def reload_config_if_changed(
+    args: argparse.Namespace,
+    daemon: PixelPetDaemon,
+    config_path: Path,
+    last_stamp: tuple[int, int] | None,
+) -> tuple[int, int] | None:
+    current_stamp = file_stamp(config_path)
+    if current_stamp == last_stamp:
+        return last_stamp
+
+    try:
+        config = _config_from_args(args)
+        pet = load_pet(config.pet_id, config.assets_dir)
+        pet.validate_or_raise(check_images=True)
+        await daemon.reconfigure(config, pet)
+    except Exception as exc:
+        print(f"config reload failed: {exc}", flush=True)
+    else:
+        print(f"config reloaded: {config_path}", flush=True)
+    return current_stamp
+
+
+def file_stamp(path: Path) -> tuple[int, int] | None:
+    try:
+        stat = path.expanduser().stat()
+    except OSError:
+        return None
+    return (stat.st_mtime_ns, stat.st_size)
 
 
 def print_status(args: argparse.Namespace) -> int:
@@ -133,7 +189,13 @@ def show_explicit_status(args: argparse.Namespace) -> int:
     pet = load_pet(config.pet_id, config.assets_dir)
     pet.validate_or_raise(check_images=True)
     status = Status(args.status)
-    gif_path = pet.gif_for(status)
+    rendered = render_status_gif(
+        pet.gif_for(status),
+        pet.pet_id,
+        status,
+        args.message,
+        config.marquee,
+    )
 
     async def _show() -> None:
         if config.dry_run:
@@ -141,15 +203,21 @@ def show_explicit_status(args: argparse.Namespace) -> int:
         else:
             if not config.address:
                 raise DisplayError("Display address is required unless --dry-run is set.")
-            display = PixelDisplay(config.address, brightness=config.brightness)
+            display = PixelDisplay(config.address, brightness=config.brightness, save_slot=config.save_slot)
         await display.connect()
         try:
-            await display.show_gif(gif_path)
+            if config.playback == "stream":
+                frames = gif_frame_sequence(rendered.path, rendered.key, config.marquee.cache_dir)
+                for frame in frames.frames:
+                    await display.show_image(frame)
+                    await asyncio.sleep(max(0.05, config.stream_frame_ms / 1000))
+            else:
+                await display.show_gif(rendered.path)
         finally:
             await display.disconnect()
 
     asyncio.run(_show())
-    print(f"status={status.value} gif={gif_path}")
+    print(f"status={status.value} gif={rendered.path}")
     return 0
 
 
@@ -190,11 +258,16 @@ def _config_from_args(args: argparse.Namespace) -> RuntimeConfig:
     overrides = {
         "address": getattr(args, "address", None),
         "brightness": getattr(args, "brightness", None),
+        "save_slot": getattr(args, "save_slot", None),
+        "playback": getattr(args, "playback", None),
+        "stream_frame_ms": getattr(args, "stream_frame_ms", None),
         "pet_id": getattr(args, "pet_id", None),
         "assets_dir": getattr(args, "assets_dir", None),
         "codex_home": getattr(args, "codex_home", None),
         "poll_seconds": getattr(args, "poll_seconds", None),
         "done_timeout_seconds": getattr(args, "done_timeout_seconds", None),
+        "hot_reload": False if getattr(args, "no_hot_reload", False) else None,
+        "replay_gifs": False if getattr(args, "no_replay_gifs", False) else None,
         "dry_run": True if getattr(args, "dry_run", False) else None,
     }
     return merge_overrides(config, **overrides)

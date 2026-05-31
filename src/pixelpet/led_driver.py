@@ -14,10 +14,12 @@ class PixelDisplay:
         self,
         address: str,
         brightness: int | None = 20,
+        save_slot: int | None = None,
         allow_non_32: bool = False,
     ) -> None:
         self.address = address
         self.brightness = brightness
+        self.save_slot = save_slot
         self.allow_non_32 = allow_non_32
         self._client: Any | None = None
         self._lock = asyncio.Lock()
@@ -58,9 +60,24 @@ class PixelDisplay:
             raise DisplayError("Display client is not connected.")
         async with self._lock:
             try:
-                await self._client.send_image(str(path), resize_method="fit")
+                if self.save_slot is not None and self.save_slot > 0:
+                    await self._client.send_image(str(path), resize_method="fit", save_slot=self.save_slot)
+                    await self._client.show_slot(self.save_slot)
+                else:
+                    await self._client.send_image(str(path), resize_method="fit")
             except Exception as exc:
                 raise DisplayError(f"Could not send GIF to display: {path}: {exc}") from exc
+
+    async def show_image(self, path: Path) -> None:
+        if self._client is None:
+            await self.connect()
+        if self._client is None:
+            raise DisplayError("Display client is not connected.")
+        async with self._lock:
+            try:
+                await self._client.send_image(str(path), resize_method="fit")
+            except Exception as exc:
+                raise DisplayError(f"Could not send image to display: {path}: {exc}") from exc
 
 
 class DryRunDisplay:
@@ -72,3 +89,6 @@ class DryRunDisplay:
 
     async def show_gif(self, path: Path) -> None:
         print(f"dry-run display: {path}")
+
+    async def show_image(self, path: Path) -> None:
+        print(f"dry-run display frame: {path}")

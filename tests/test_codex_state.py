@@ -40,6 +40,7 @@ class CodexStateReaderTest(unittest.TestCase):
             status = fx.reader().current_status()
 
             self.assertEqual(status.status, Status.PERMISSION_REQUIRED)
+            self.assertEqual(status.activity, "NEEDS APPROVAL")
             self.assertIn("Allow network pull", status.reason)
 
     def test_needs_input_for_request_user_input(self) -> None:
@@ -65,7 +66,74 @@ class CodexStateReaderTest(unittest.TestCase):
             status = fx.reader().current_status()
 
             self.assertEqual(status.status, Status.NEEDS_INPUT)
+            self.assertEqual(status.activity, "WAITING INPUT")
             self.assertIn("Which pet", status.reason)
+
+    def test_working_activity_uses_pending_command(self) -> None:
+        with fixture() as fx:
+            rollout = fx.rollout(
+                event("event_msg", {"type": "task_started"}, NOW_MS - 5_000),
+                event(
+                    "response_item",
+                    {
+                        "type": "function_call",
+                        "call_id": "call-3",
+                        "name": "exec_command",
+                        "arguments": {"cmd": ".venv/bin/python -m unittest discover -s tests"},
+                    },
+                    NOW_MS - 1_000,
+                ),
+            )
+            fx.thread("t1", rollout)
+
+            status = fx.reader().current_status()
+
+            self.assertEqual(status.status, Status.WORKING)
+            self.assertEqual(status.activity, "RUNNING TESTS")
+
+    def test_working_activity_uses_git_command(self) -> None:
+        with fixture() as fx:
+            rollout = fx.rollout(
+                event("event_msg", {"type": "task_started"}, NOW_MS - 5_000),
+                event(
+                    "response_item",
+                    {
+                        "type": "function_call",
+                        "call_id": "call-4",
+                        "name": "exec_command",
+                        "arguments": {"cmd": "git diff --check"},
+                    },
+                    NOW_MS - 1_000,
+                ),
+            )
+            fx.thread("t1", rollout)
+
+            status = fx.reader().current_status()
+
+            self.assertEqual(status.status, Status.WORKING)
+            self.assertEqual(status.activity, "CHECKING GIT")
+
+    def test_working_activity_uses_patch_tool(self) -> None:
+        with fixture() as fx:
+            rollout = fx.rollout(
+                event("event_msg", {"type": "task_started"}, NOW_MS - 5_000),
+                event(
+                    "response_item",
+                    {
+                        "type": "function_call",
+                        "call_id": "call-5",
+                        "name": "apply_patch",
+                        "arguments": {},
+                    },
+                    NOW_MS - 1_000,
+                ),
+            )
+            fx.thread("t1", rollout)
+
+            status = fx.reader().current_status()
+
+            self.assertEqual(status.status, Status.WORKING)
+            self.assertEqual(status.activity, "PATCHING")
 
     def test_done_clears_after_timeout(self) -> None:
         with fixture() as fx:
@@ -97,7 +165,50 @@ class CodexStateReaderTest(unittest.TestCase):
             status = fx.reader().current_status()
 
             self.assertEqual(status.status, Status.FAILED_OFFLINE)
+            self.assertEqual(status.activity, "FAILED")
             self.assertIn("interrupted", status.reason)
+
+    def test_aborted_turn_does_not_expire(self) -> None:
+        with fixture() as fx:
+            rollout = fx.rollout(
+                event("event_msg", {"type": "task_started"}, NOW_MS - 400_000),
+                event("event_msg", {"type": "turn_aborted", "reason": "interrupted"}, NOW_MS - 360_000),
+            )
+            fx.thread("old-failed", rollout, updated_at_ms=NOW_MS - 360_000)
+
+            self.assertEqual(fx.reader().current_status().status, Status.FAILED_OFFLINE)
+
+    def test_recent_working_beats_older_failed_thread(self) -> None:
+        with fixture() as fx:
+            failed = fx.rollout(
+                event("event_msg", {"type": "task_started"}, NOW_MS - 400_000),
+                event("event_msg", {"type": "turn_aborted", "reason": "interrupted"}, NOW_MS - 360_000),
+            )
+            working = fx.rollout(
+                event("event_msg", {"type": "task_started"}, NOW_MS - 5_000),
+            )
+            fx.thread("old-failed", failed, updated_at_ms=NOW_MS - 360_000)
+            fx.thread("working", working, updated_at_ms=NOW_MS - 1_000)
+
+            self.assertEqual(fx.reader().current_status().status, Status.WORKING)
+
+    def test_newer_idle_thread_clears_older_failed_thread(self) -> None:
+        with fixture() as fx:
+            failed = fx.rollout(
+                event("event_msg", {"type": "task_started"}, NOW_MS - 400_000),
+                event("event_msg", {"type": "turn_aborted", "reason": "interrupted"}, NOW_MS - 360_000),
+            )
+            idle = fx.rollout(
+                event("event_msg", {"type": "task_started"}, NOW_MS - 20_000),
+                event("event_msg", {"type": "task_complete"}, NOW_MS - 10_000),
+            )
+            fx.thread("old-failed", failed, updated_at_ms=NOW_MS - 360_000)
+            fx.thread("newer-idle", idle, updated_at_ms=NOW_MS - 10_000)
+
+            status = fx.reader(done_timeout_seconds=0).current_status()
+
+            self.assertEqual(status.status, Status.IDLE)
+            self.assertEqual(status.thread_id, "newer-idle")
 
     def test_cli_thread_is_ignored(self) -> None:
         with fixture() as fx:
@@ -142,7 +253,8 @@ class Fixture:
         self.tmp.cleanup()
 
     def _setup_db(self) -> None:
-        with sqlite3.connect(self.db) as connection:
+        connection = sqlite3.connect(self.db)
+        try:
             connection.execute(
                 """
                 create table threads (
@@ -162,6 +274,8 @@ class Fixture:
                 )
                 """
             )
+        finally:
+            connection.close()
 
     def rollout(self, *events: dict[str, object]) -> Path:
         path = self.root / f"rollout-{len(list(self.root.glob('rollout-*')))}.jsonl"
@@ -176,7 +290,8 @@ class Fixture:
         thread_source: str = "user",
         updated_at_ms: int = NOW_MS - 1_000,
     ) -> None:
-        with sqlite3.connect(self.db) as connection:
+        connection = sqlite3.connect(self.db)
+        try:
             connection.execute(
                 """
                 insert into threads values (
@@ -199,13 +314,16 @@ class Fixture:
                     0,
                 ),
             )
+            connection.commit()
+        finally:
+            connection.close()
 
-    def reader(self) -> CodexStateReader:
+    def reader(self, done_timeout_seconds: float = 300, active_window_seconds: float = 300) -> CodexStateReader:
         return CodexStateReader(
             codex_home=self.root,
             state_db_path=self.db,
-            done_timeout_seconds=300,
-            active_window_seconds=300,
+            done_timeout_seconds=done_timeout_seconds,
+            active_window_seconds=active_window_seconds,
             now_ms=lambda: NOW_MS,
         )
 
@@ -221,4 +339,3 @@ def event(event_type: str, payload: dict[str, object], timestamp_ms: int) -> dic
 
 if __name__ == "__main__":
     unittest.main()
-

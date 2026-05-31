@@ -129,6 +129,7 @@ Example:
 [display]
 address = "AA:BB:CC:DD:EE:FF"
 brightness = 20
+playback = "gif"
 
 [pet]
 id = "dino"
@@ -137,6 +138,21 @@ assets_dir = "/Users/martin/Documents/PixelPet/assets/pets"
 [daemon]
 poll_seconds = 3
 done_timeout_seconds = 300
+hot_reload = true
+replay_gifs = true
+
+[marquee]
+enabled = true
+badge_patterns = true
+source = "rotate"
+sources = ["status", "activity", "thread_title"]
+separator = " / "
+per_source_max_chars = 10
+font = "3x5"
+max_chars = 24
+frame_ms = 120
+scroll_step_px = 2
+max_frames = 72
 
 [codex]
 home = "/Users/martin/.codex"
@@ -161,7 +177,23 @@ Every config field can be overridden by CLI flags.
 
 - No direct reuse of full Codex pet atlases at runtime.
 - No streaming individual pixels.
-- No corner-dot overlay compositing in the first version.
 - No CLI-session support.
 - No automatic daemon installation or launch agent.
 - No multi-display support.
+
+## Marquee Overlay
+
+The daemon can render a runtime GIF overlay for the top lane:
+
+- Status badge remains fixed in `x=0..9`.
+- Marquee text scrolls in `x=10..31`, `y=0..9`.
+- Runtime badge patterns redraw the status badge: orange blinks for approval, blue pulses for input, red flashes for failed/offline, and working uses the original rotating cyan dots.
+- The default message source rotates through status, activity, and active Codex thread title.
+- Supported message sources are `thread_title`, `reason`, `activity`, `status`/`status_label`, `thread_id`, and `rotate`.
+- Rotate mode joins configured sources with `separator` and caps each part with `per_source_max_chars`.
+- Text is normalized to uppercase 3x5 glyphs, unsupported characters become spaces, and the result is capped at 24 characters by default.
+- Rendered GIFs are cached under `.pixelpet/render-cache/` and uploaded when the status/message changes. Marquee GIFs are capped by `scroll_step_px` and `max_frames`, because very long GIFs upload slowly and can be unreliable on the display. Generated GIFs end with clean marquee-lane tail frames, so hardware that holds the final GIF frame does not freeze on partial text. With `replay_gifs = true`, the daemon can re-send the same cached GIF after its duration elapses. `playback = "stream"` remains available as a slow debugging fallback that sends PNG frames one by one.
+
+## Hot Reload
+
+When `hot_reload = true`, `pixelpet run` watches the active config file between polling cycles. Pet selection, marquee settings, daemon timings, GIF replay behavior, playback mode, Codex state path, display address, brightness, and save slot are reloaded without restarting the process. Display changes reconnect and force the current GIF to be resent.

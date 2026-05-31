@@ -1,6 +1,8 @@
 [display]
 address = "7D157B3A-F9F5-06B7-DEC5-A962DAAB7E72"
 brightness = 50
+playback = "stream"
+stream_frame_ms = 50
 
 [pet]
 id = "hal"
@@ -8,7 +10,24 @@ assets_dir = "/Users/martin/Documents/PixelPet/assets/pets"
 
 [daemon]
 poll_seconds = 3
-done_timeout_seconds = 10
+done_timeout_seconds = 30
+hot_reload = true
+replay_gifs = false
+
+[marquee]
+enabled = true
+badge_patterns = true
+# source can be "thread_title", "reason", "activity", "status", "status_label",
+# "thread_id", or "rotate".
+source = "rotate"
+sources = ["status", "activity", "thread_title"]
+separator = " / "
+per_source_max_chars = 10
+font = "3x5"
+max_chars = 24
+frame_ms = 120
+scroll_step_px = 2
+max_frames = 72
 
 [codex]
 home = "/Users/martin/.codex"
