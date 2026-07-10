@@ -1,8 +1,8 @@
 # PixelPet
 
-PixelPet is a small Python daemon that shows Codex Desktop status on a 32x32 iPixel/MT LED display.
+PixelPet is a small Python daemon that shows assistant status on a 32x32 iPixel/MT LED display.
 
-It reads local Codex Desktop state from `~/.codex/state_5.sqlite`, selects a status, and sends the matching pet GIF to the display with `pypixelcolor`.
+It reads local Codex Desktop or OpenCode CLI state, selects a status, and sends the matching pet GIF to the display with `pypixelcolor`.
 
 The default config lives at `config.toml` next to `pyproject.toml`.
 
@@ -24,6 +24,12 @@ Run without hardware:
 
 ```bash
 PYTHONPATH=src python -m pixelpet.cli run --dry-run
+```
+
+Print the current inferred assistant status once:
+
+```bash
+PYTHONPATH=src python -m pixelpet.cli status
 ```
 
 Validate a pet pack:
@@ -56,6 +62,17 @@ Force a status with a marquee message:
 PYTHONPATH=src python -m pixelpet.cli show working --message "BUILDING HAL MARQUEE" --dry-run
 ```
 
+Start or stop the background daemon with the project script:
+
+```bash
+scripts/start_pixelpet.sh
+scripts/stop_pixelpet.sh
+```
+
+`start_pixelpet.sh` writes logs and the PID under `.pixelpet/`. If the daemon
+exits during startup, the script removes the stale PID file and prints the log
+output from that failed launch.
+
 The daemon hot-reloads `config.toml` by default while `pixelpet run` is active.
 Use `hot_reload = false` under `[daemon]` or pass `--no-hot-reload` to disable it.
 The recommended playback mode is `playback = "gif"`. PixelPet keeps marquee
@@ -69,7 +86,7 @@ but it sends a full PNG per frame over BLE and is slow.
 Marquee sources in `config.toml`:
 
 ```toml
-source = "thread_title" # active Codex thread title
+source = "thread_title" # active assistant thread/session title
 source = "reason"       # status reason, such as approval/input text
 source = "activity"     # compact activity, such as RUNNING TESTS or PATCHING
 source = "status"       # short labels like WORK, INPUT, APPROVE
@@ -91,5 +108,41 @@ badge_patterns = true
 With `badge_patterns = true`, PixelPet redraws the upper-left badge at runtime:
 orange blinks for approval, blue pulses for input, red flashes for failed/offline,
 and working uses the original rotating cyan dots.
+
+## Assistant Backends
+
+PixelPet supports two assistant state backends:
+
+- `codex_desktop`: reads Codex Desktop state from `state_5.sqlite` under the configured Codex home.
+- `opencode_cli`: reads the local OpenCode SQLite database directly, across all unarchived OpenCode sessions.
+
+Select the backend in `config.toml`:
+
+```toml
+[assistant]
+backend = "codex_desktop" # or "opencode_cli"
+
+[codex]
+home = "/Users/martin/.codex"
+
+[opencode]
+db_path = "/Users/martin/.local/share/opencode/opencode.db"
+```
+
+TOML string values must be quoted. Use `backend = "opencode_cli"`, not
+`backend = opencode_cli`.
+
+`codex_desktop` remains the default for existing configs. `opencode_cli`
+passively reads OpenCode state without launching `opencode` or requiring
+`opencode serve`. `pixelpet run` and `pixelpet status` also accept
+`--assistant-backend` and `--opencode-db-path` for temporary overrides.
+
+OpenCode status mapping uses the existing PixelPet states:
+
+- pending OpenCode tool approval -> `permission_required`
+- running assistant or tool activity -> `working`
+- recently completed assistant message -> `done`
+- assistant error or abort -> `failed_offline`
+- no active or recent session -> `idle`
 
 See [plan.md](/Users/martin/Documents/PixelPet/plan.md) for the design details.

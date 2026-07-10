@@ -11,6 +11,7 @@ from PIL import Image
 from pixelpet.cli import file_stamp, reload_config_if_changed
 from pixelpet.config import RuntimeConfig, load_config
 from pixelpet.daemon import PixelPetDaemon, state_reader_for_config
+from pixelpet.opencode_state import OpencodeStateReader
 from pixelpet.pet_pack import create_pet_pack, load_pet
 from pixelpet.status import REQUIRED_STATUSES
 
@@ -42,6 +43,47 @@ class HotReloadTest(unittest.TestCase):
 
             self.assertEqual(daemon.pet.pet_id, "two")
             self.assertEqual(daemon.state_reader.codex_home, root / "codex-two")
+            self.assertIs(daemon.display, display)
+
+    def test_state_reader_factory_uses_opencode_backend(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "opencode.db"
+            config = RuntimeConfig(
+                assistant_backend="opencode_cli",
+                opencode_db_path=db_path,
+            )
+
+            reader = state_reader_for_config(config)
+
+            self.assertIsInstance(reader, OpencodeStateReader)
+            self.assertEqual(reader.db_path, db_path)
+
+    def test_reconfigure_updates_reader_when_backend_changes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            assets_dir = root / "pets"
+            write_pet_pack(assets_dir, "one")
+            pet = load_pet("one", assets_dir)
+            config = RuntimeConfig(
+                dry_run=True,
+                pet_id="one",
+                assets_dir=assets_dir,
+                codex_home=root / "codex",
+            )
+            display = FakeDisplay()
+            daemon = PixelPetDaemon(config, pet, state_reader_for_config(config), display)
+
+            next_config = RuntimeConfig(
+                dry_run=True,
+                pet_id="one",
+                assets_dir=assets_dir,
+                assistant_backend="opencode_cli",
+                opencode_db_path=root / "opencode.db",
+            )
+            asyncio.run(daemon.reconfigure(next_config, pet))
+
+            self.assertIsInstance(daemon.state_reader, OpencodeStateReader)
+            self.assertEqual(daemon.state_reader.db_path, root / "opencode.db")
             self.assertIs(daemon.display, display)
 
     def test_reload_config_if_changed_applies_new_config(self) -> None:
@@ -91,7 +133,9 @@ def args_for_config(config_path: Path) -> argparse.Namespace:
         brightness=None,
         pet_id=None,
         assets_dir=None,
+        assistant_backend=None,
         codex_home=None,
+        opencode_db_path=None,
         poll_seconds=None,
         done_timeout_seconds=None,
         dry_run=False,

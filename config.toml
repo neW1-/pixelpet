@@ -29,5 +29,10 @@ frame_ms = 120
 scroll_step_px = 2
 max_frames = 72
 
+[assistant]
+backend = "opencode"
 [codex]
 home = "/Users/martin/.codex"
+
+[opencode]
+db_path = "/Users/martin/.local/share/opencode/opencode.db"

@@ -8,21 +8,12 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
 
+from .assistant_state import StatusSnapshot
 from .config import default_codex_home
 from .status import Status, status_priority
 
 DEFAULT_TAIL_BYTES = 512 * 1024
 DEFAULT_MAX_LINES = 700
-
-
-@dataclass(frozen=True)
-class StatusSnapshot:
-    status: Status
-    reason: str
-    thread_id: str | None = None
-    title: str | None = None
-    updated_at_ms: int | None = None
-    activity: str | None = None
 
 
 @dataclass(frozen=True)
