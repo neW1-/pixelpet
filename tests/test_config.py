@@ -4,10 +4,17 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from pixelpet.config import load_config
+from pixelpet.config import ConfigError, default_opencode_db_path, load_config
 
 
 class ConfigTest(unittest.TestCase):
+    def test_default_assistant_backend_is_codex_desktop(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            config = load_config(Path(tmp) / "missing.toml")
+
+            self.assertEqual(config.assistant_backend, "codex_desktop")
+            self.assertEqual(config.opencode_db_path, default_opencode_db_path())
+
     def test_loads_marquee_config(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "config.toml"
@@ -58,6 +65,57 @@ class ConfigTest(unittest.TestCase):
             self.assertEqual(config.marquee.scroll_step_px, 3)
             self.assertEqual(config.marquee.max_frames, 48)
             self.assertEqual(config.marquee.cache_dir, Path("/tmp/pixelpet-render-cache"))
+
+    def test_loads_assistant_backend_config(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "config.toml"
+            path.write_text(
+                """
+                [assistant]
+                backend = "opencode_cli"
+
+                [opencode]
+                db_path = "/tmp/opencode.db"
+
+                [codex]
+                home = "/tmp/codex-home"
+                """,
+                encoding="utf-8",
+            )
+
+            config = load_config(path)
+
+            self.assertEqual(config.assistant_backend, "opencode_cli")
+            self.assertEqual(config.opencode_db_path, Path("/tmp/opencode.db"))
+            self.assertEqual(config.codex_home, Path("/tmp/codex-home"))
+
+    def test_unknown_assistant_backend_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "config.toml"
+            path.write_text(
+                """
+                [assistant]
+                backend = "unknown"
+                """,
+                encoding="utf-8",
+            )
+
+            with self.assertRaises(ConfigError):
+                load_config(path)
+
+    def test_invalid_toml_is_config_error(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "config.toml"
+            path.write_text(
+                """
+                [assistant]
+                backend = opencode
+                """,
+                encoding="utf-8",
+            )
+
+            with self.assertRaisesRegex(ConfigError, "Invalid TOML"):
+                load_config(path)
 
 
 if __name__ == "__main__":

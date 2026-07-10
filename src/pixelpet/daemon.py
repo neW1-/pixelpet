@@ -7,10 +7,12 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Protocol
 
-from .codex_state import CodexStateReader, StatusSnapshot
+from .assistant_state import StatusReader, StatusSnapshot
+from .codex_state import CodexStateReader
 from .config import DEFAULT_MARQUEE_SOURCES, MarqueeConfig, RuntimeConfig
 from .led_driver import DryRunDisplay, PixelDisplay
 from .marquee import STATUS_LABELS, RenderedGif, normalize_message, render_status_gif
+from .opencode_state import OpencodeStateReader
 from .pet_pack import PetPack
 from .playback import FrameSequence, gif_frame_sequence
 from .status import Status
@@ -34,7 +36,7 @@ class Display(Protocol):
 class PixelPetDaemon:
     config: RuntimeConfig
     pet: PetPack
-    state_reader: CodexStateReader
+    state_reader: StatusReader
     display: Display
     last_status: Status | None = None
     last_render_key: str | None = None
@@ -194,12 +196,20 @@ def status_line(snapshot: StatusSnapshot, gif_path: Path) -> str:
     return f"status={snapshot.status.value}{activity}{thread} gif={gif_path}"
 
 
-def state_reader_for_config(config: RuntimeConfig) -> CodexStateReader:
-    return CodexStateReader(
-        codex_home=config.codex_home,
-        done_timeout_seconds=config.done_timeout_seconds,
-        active_window_seconds=config.active_window_seconds,
-    )
+def state_reader_for_config(config: RuntimeConfig) -> StatusReader:
+    if config.assistant_backend == "codex_desktop":
+        return CodexStateReader(
+            codex_home=config.codex_home,
+            done_timeout_seconds=config.done_timeout_seconds,
+            active_window_seconds=config.active_window_seconds,
+        )
+    if config.assistant_backend == "opencode_cli":
+        return OpencodeStateReader(
+            db_path=config.opencode_db_path,
+            done_timeout_seconds=config.done_timeout_seconds,
+            active_window_seconds=config.active_window_seconds,
+        )
+    raise ValueError(f"Unknown assistant backend: {config.assistant_backend}")
 
 
 def display_for_config(config: RuntimeConfig) -> Display:
@@ -214,9 +224,11 @@ def display_signature(config: RuntimeConfig) -> tuple[bool, str | None, int | No
     return (config.dry_run, config.address, config.brightness, config.save_slot)
 
 
-def reader_signature(config: RuntimeConfig) -> tuple[Path, float, float]:
+def reader_signature(config: RuntimeConfig) -> tuple[str, Path, Path, float, float]:
     return (
+        config.assistant_backend,
         config.codex_home,
+        config.opencode_db_path,
         config.done_timeout_seconds,
         config.active_window_seconds,
     )

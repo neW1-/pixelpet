@@ -7,8 +7,23 @@ from pathlib import Path
 from typing import Any
 
 
+ASSISTANT_BACKENDS: tuple[str, ...] = ("codex_desktop", "opencode_cli")
+
+
+class ConfigError(ValueError):
+    pass
+
+
 def default_codex_home() -> Path:
     return Path(os.environ.get("CODEX_HOME", Path.home() / ".codex")).expanduser()
+
+
+def default_opencode_db_path() -> Path:
+    configured = os.environ.get("OPENCODE_DB_PATH")
+    if configured:
+        return Path(configured).expanduser()
+    data_home = Path(os.environ.get("XDG_DATA_HOME", Path.home() / ".local" / "share"))
+    return (data_home / "opencode" / "opencode.db").expanduser()
 
 
 def project_root() -> Path:
@@ -61,7 +76,9 @@ class RuntimeConfig:
     stream_frame_ms: int = 220
     pet_id: str = "dino"
     assets_dir: Path = default_assets_dir()
+    assistant_backend: str = "codex_desktop"
     codex_home: Path = default_codex_home()
+    opencode_db_path: Path = default_opencode_db_path()
     poll_seconds: float = 3.0
     done_timeout_seconds: float = 300.0
     active_window_seconds: float = 300.0
@@ -76,11 +93,16 @@ def load_config(path: Path | None = None) -> RuntimeConfig:
     if not config_path.exists():
         return RuntimeConfig()
 
-    data = tomllib.loads(config_path.read_text(encoding="utf-8"))
+    try:
+        data = tomllib.loads(config_path.read_text(encoding="utf-8"))
+    except tomllib.TOMLDecodeError as exc:
+        raise ConfigError(f"Invalid TOML in {config_path}: {exc}") from exc
     display = _table(data.get("display"))
     pet = _table(data.get("pet"))
     daemon = _table(data.get("daemon"))
+    assistant = _table(data.get("assistant"))
     codex = _table(data.get("codex"))
+    opencode = _table(data.get("opencode"))
     marquee = _table(data.get("marquee"))
 
     return RuntimeConfig(
@@ -91,7 +113,9 @@ def load_config(path: Path | None = None) -> RuntimeConfig:
         stream_frame_ms=_optional_int(display.get("stream_frame_ms"), default=220) or 220,
         pet_id=_optional_str(pet.get("id")) or "dino",
         assets_dir=_path(pet.get("assets_dir"), default_assets_dir()),
+        assistant_backend=_assistant_backend(assistant.get("backend")),
         codex_home=_path(codex.get("home"), default_codex_home()),
+        opencode_db_path=_path(opencode.get("db_path"), default_opencode_db_path()),
         poll_seconds=_optional_float(daemon.get("poll_seconds"), default=3.0),
         done_timeout_seconds=_optional_float(daemon.get("done_timeout_seconds"), default=300.0),
         active_window_seconds=_optional_float(daemon.get("active_window_seconds"), default=300.0),
@@ -124,7 +148,9 @@ def merge_overrides(config: RuntimeConfig, **overrides: Any) -> RuntimeConfig:
         "stream_frame_ms": config.stream_frame_ms,
         "pet_id": config.pet_id,
         "assets_dir": config.assets_dir,
+        "assistant_backend": config.assistant_backend,
         "codex_home": config.codex_home,
+        "opencode_db_path": config.opencode_db_path,
         "poll_seconds": config.poll_seconds,
         "done_timeout_seconds": config.done_timeout_seconds,
         "active_window_seconds": config.active_window_seconds,
@@ -206,6 +232,21 @@ def _playback_mode(value: object) -> str:
     if mode not in {"gif", "stream"}:
         return "gif"
     return mode
+
+
+def _assistant_backend(value: object) -> str:
+    backend = (_optional_str(value) or "codex_desktop").lower()
+    aliases = {
+        "codex": "codex_desktop",
+        "codex-desktop": "codex_desktop",
+        "opencode": "opencode_cli",
+        "opencode-cli": "opencode_cli",
+    }
+    backend = aliases.get(backend, backend)
+    if backend not in ASSISTANT_BACKENDS:
+        allowed = ", ".join(ASSISTANT_BACKENDS)
+        raise ConfigError(f"Unknown assistant backend {backend!r}; expected one of: {allowed}")
+    return backend
 
 
 def _path(value: object, default: Path) -> Path:

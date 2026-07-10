@@ -4,9 +4,16 @@ import argparse
 import asyncio
 from pathlib import Path
 
-from .config import RuntimeConfig, default_assets_dir, default_config_path, load_config, merge_overrides
-from .codex_state import CodexStateReader
-from .daemon import PixelPetDaemon
+from .config import (
+    ASSISTANT_BACKENDS,
+    ConfigError,
+    RuntimeConfig,
+    default_assets_dir,
+    default_config_path,
+    load_config,
+    merge_overrides,
+)
+from .daemon import PixelPetDaemon, state_reader_for_config
 from .led_driver import DisplayError, DryRunDisplay, PixelDisplay
 from .marquee import render_status_gif
 from .pet_pack import PetPackError, create_pet_pack, list_pets, load_pet
@@ -25,6 +32,8 @@ def main(argv: list[str] | None = None) -> int:
         parser.exit(2, f"pixelpet: {exc}\n")
     except DisplayError as exc:
         parser.exit(2, f"pixelpet: {exc}\n")
+    except ConfigError as exc:
+        parser.exit(2, f"pixelpet: {exc}\n")
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -40,7 +49,9 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--stream-frame-ms", type=int, help="Frame cadence for stream playback.")
     run.add_argument("--pet", dest="pet_id", help="Pet id to use.")
     run.add_argument("--assets-dir", type=Path, help="Directory containing pet packs.")
+    run.add_argument("--assistant-backend", choices=ASSISTANT_BACKENDS, help="Assistant backend to watch.")
     run.add_argument("--codex-home", type=Path, help="Codex home directory.")
+    run.add_argument("--opencode-db-path", type=Path, help="OpenCode SQLite database path.")
     run.add_argument("--poll-seconds", type=float, help="Polling interval.")
     run.add_argument("--done-timeout-seconds", type=float, help="How long done stays visible.")
     run.add_argument("--no-hot-reload", action="store_true", help="Disable config hot reload while running.")
@@ -49,9 +60,11 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--once", action="store_true", help="Send one status GIF and exit.")
     run.set_defaults(func=run_daemon)
 
-    status = subparsers.add_parser("status", help="Print the current inferred Codex status once.")
+    status = subparsers.add_parser("status", help="Print the current inferred assistant status once.")
     add_common_config_flags(status)
+    status.add_argument("--assistant-backend", choices=ASSISTANT_BACKENDS, help="Assistant backend to watch.")
     status.add_argument("--codex-home", type=Path, help="Codex home directory.")
+    status.add_argument("--opencode-db-path", type=Path, help="OpenCode SQLite database path.")
     status.add_argument("--done-timeout-seconds", type=float, help="How long done stays visible.")
     status.set_defaults(func=print_status)
 
@@ -159,11 +172,7 @@ def file_stamp(path: Path) -> tuple[int, int] | None:
 
 def print_status(args: argparse.Namespace) -> int:
     config = _config_from_args(args)
-    reader = CodexStateReader(
-        codex_home=config.codex_home,
-        done_timeout_seconds=config.done_timeout_seconds,
-        active_window_seconds=config.active_window_seconds,
-    )
+    reader = state_reader_for_config(config)
     snapshot = reader.current_status()
     print(f"{snapshot.status.value}: {snapshot.reason}")
     return 0
@@ -263,7 +272,9 @@ def _config_from_args(args: argparse.Namespace) -> RuntimeConfig:
         "stream_frame_ms": getattr(args, "stream_frame_ms", None),
         "pet_id": getattr(args, "pet_id", None),
         "assets_dir": getattr(args, "assets_dir", None),
+        "assistant_backend": getattr(args, "assistant_backend", None),
         "codex_home": getattr(args, "codex_home", None),
+        "opencode_db_path": getattr(args, "opencode_db_path", None),
         "poll_seconds": getattr(args, "poll_seconds", None),
         "done_timeout_seconds": getattr(args, "done_timeout_seconds", None),
         "hot_reload": False if getattr(args, "no_hot_reload", False) else None,
