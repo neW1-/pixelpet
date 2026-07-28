@@ -99,6 +99,58 @@ class OpencodeStateReaderTest(unittest.TestCase):
 
             self.assertEqual(status.status, Status.IDLE)
 
+    def test_completed_assistant_with_session_cost(self) -> None:
+        with fixture() as fx:
+            fx.session("s1", updated_at=NOW_MS - 1_000, cost=1.15)
+            fx.message(
+                "s1",
+                assistant_message(
+                    completed=True,
+                    completed_at=NOW_MS - 1_000,
+                ),
+            )
+
+            status = fx.reader().current_status()
+
+            self.assertEqual(status.status, Status.DONE)
+            self.assertIsNotNone(status.cost)
+            self.assertAlmostEqual(status.cost, 1.15)
+
+    def test_completed_assistant_legacy_usage_cost(self) -> None:
+        with fixture() as fx:
+            fx.session("s1", updated_at=NOW_MS - 1_000)
+            fx.message(
+                "s1",
+                {
+                    "role": "assistant",
+                    "time": {"created": NOW_MS - 2_000, "completed": NOW_MS - 1_000},
+                    "finish": "stop",
+                    "usage": {"cost": 0.51},
+                },
+            )
+
+            status = fx.reader().current_status()
+
+            self.assertEqual(status.status, Status.DONE)
+            self.assertIsNotNone(status.cost)
+            self.assertAlmostEqual(status.cost, 0.51)
+
+    def test_completed_assistant_no_cost_is_none(self) -> None:
+        with fixture() as fx:
+            fx.session("s1", updated_at=NOW_MS - 1_000)
+            fx.message(
+                "s1",
+                assistant_message(
+                    completed=True,
+                    completed_at=NOW_MS - 1_000,
+                ),
+            )
+
+            status = fx.reader().current_status()
+
+            self.assertEqual(status.status, Status.DONE)
+            self.assertIsNone(status.cost)
+
     def test_assistant_error_is_failed(self) -> None:
         with fixture() as fx:
             fx.session("s1")
@@ -142,7 +194,8 @@ class Fixture:
                   title text,
                   directory text,
                   time_updated integer,
-                  time_archived integer
+                  time_archived integer,
+                  cost real default 0
                 )
                 """
             )
@@ -173,12 +226,12 @@ class Fixture:
         finally:
             connection.close()
 
-    def session(self, session_id: str, updated_at: int = NOW_MS - 1_000) -> None:
+    def session(self, session_id: str, updated_at: int = NOW_MS - 1_000, cost: float = 0.0) -> None:
         connection = sqlite3.connect(self.db)
         try:
             connection.execute(
-                "insert into session values (?, ?, ?, ?, ?)",
-                (session_id, "Test OpenCode session", str(self.root), updated_at, None),
+                "insert into session values (?, ?, ?, ?, ?, ?)",
+                (session_id, "Test OpenCode session", str(self.root), updated_at, None, cost),
             )
             connection.commit()
         finally:
@@ -238,6 +291,7 @@ def assistant_message(
     created_at: int = NOW_MS - 2_000,
     completed_at: int = NOW_MS - 1_000,
     error: dict[str, object] | None = None,
+    cost: float | None = None,
 ) -> dict[str, object]:
     data: dict[str, object] = {
         "role": "assistant",
@@ -248,6 +302,8 @@ def assistant_message(
         data["time"] = {"created": created_at, "completed": completed_at}
     if error is not None:
         data["error"] = error
+    if cost is not None:
+        data["cost"] = cost
     return data
 
 

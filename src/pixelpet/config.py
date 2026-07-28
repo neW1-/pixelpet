@@ -55,6 +55,7 @@ DEFAULT_MARQUEE_SOURCES: tuple[str, ...] = ("status", "activity", "thread_title"
 class MarqueeConfig:
     enabled: bool = True
     badge_patterns: bool = True
+    show_cost: bool = True
     source: str = "thread_title"
     sources: tuple[str, ...] = DEFAULT_MARQUEE_SOURCES
     separator: str = " / "
@@ -125,6 +126,7 @@ def load_config(path: Path | None = None) -> RuntimeConfig:
         marquee=MarqueeConfig(
             enabled=_optional_bool(marquee.get("enabled"), default=True),
             badge_patterns=_optional_bool(marquee.get("badge_patterns"), default=True),
+            show_cost=_optional_bool(marquee.get("show_cost"), default=True),
             source=_optional_str(marquee.get("source")) or "thread_title",
             sources=_optional_str_tuple(marquee.get("sources"), DEFAULT_MARQUEE_SOURCES),
             separator=_optional_raw_str(marquee.get("separator")) or " / ",

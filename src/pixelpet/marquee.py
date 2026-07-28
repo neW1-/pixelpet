@@ -18,6 +18,10 @@ FONT_HEIGHT = 5
 CHAR_SPACING = 1
 SCROLL_GAP = 6
 TEXT_COLOR = (178, 224, 255)
+COST_X = 0
+COST_Y_LINE1 = 10
+COST_Y_LINE2 = 16
+COST_COLOR = (130, 180, 220)
 TRAILING_CLEAR_FRAMES = 6
 BADGE_PATTERN_VERSION = "badge-v4"
 BADGE_BG = (2, 4, 8)
@@ -121,6 +125,7 @@ def render_status_gif(
     status: Status,
     message: str | None,
     config: MarqueeConfig,
+    cost: float | None = None,
 ) -> RenderedGif:
     normalized = normalize_message(message, status, config.max_chars)
     if not config.enabled and not config.badge_patterns:
@@ -132,7 +137,7 @@ def render_status_gif(
         )
 
     render_message = normalized if config.enabled else STATUS_LABELS[status]
-    key = render_key(base_gif, pet_id, status, render_message, config)
+    key = render_key(base_gif, pet_id, status, render_message, config, cost=cost)
     output = config.cache_dir.expanduser() / f"{key}.gif"
     duration_seconds = marquee_duration_seconds(
         render_message,
@@ -151,6 +156,8 @@ def render_status_gif(
             max_frames=config.max_frames,
             show_message=config.enabled,
             draw_badge=config.badge_patterns,
+            show_cost=config.show_cost,
+            cost=cost,
         )
     return RenderedGif(output, key, render_message, duration_seconds)
 
@@ -161,8 +168,10 @@ def render_key(
     status: Status,
     message: str,
     config: MarqueeConfig,
+    cost: float | None = None,
 ) -> str:
     stat = base_gif.stat()
+    cost_part = f"{cost:.4f}" if cost is not None else "no-cost"
     payload = "|".join(
         [
             pet_id,
@@ -175,9 +184,11 @@ def render_key(
             str(config.max_frames),
             str(config.enabled),
             str(config.badge_patterns),
+            str(config.show_cost),
             BADGE_PATTERN_VERSION,
             str(stat.st_mtime_ns),
             str(stat.st_size),
+            cost_part,
         ]
     )
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:24]
@@ -193,6 +204,8 @@ def compose_marquee_gif(
     max_frames: int | None = 72,
     show_message: bool = True,
     draw_badge: bool = True,
+    show_cost: bool = True,
+    cost: float | None = None,
 ) -> None:
     try:
         from PIL import Image, ImageDraw, ImageSequence
@@ -215,6 +228,8 @@ def compose_marquee_gif(
             draw_status_badge(draw, status, index)
         if show_message:
             draw_text(draw, message, LANE_X + offset, TEXT_Y)
+        if show_cost:
+            draw_cost(draw, cost, COST_X, COST_Y_LINE1, COST_Y_LINE2)
         frames.append(frame)
 
     for tail_index in range(TRAILING_CLEAR_FRAMES):
@@ -223,6 +238,8 @@ def compose_marquee_gif(
         draw = ImageDraw.Draw(frame)
         if draw_badge:
             draw_status_badge(draw, status, index)
+        if show_cost:
+            draw_cost(draw, cost, COST_X, COST_Y_LINE1, COST_Y_LINE2)
         frames.append(frame)
 
     frames[0].save(
@@ -384,3 +401,30 @@ def draw_char(draw: object, char: str, x: int, y: int) -> None:
 
 def _inside_lane(x: int, y: int) -> bool:
     return LANE_X <= x < LANE_X + LANE_WIDTH and LANE_Y <= y < LANE_Y + LANE_HEIGHT
+
+
+def draw_text_unclipped(draw: object, text: str, x: int, y: int, color: tuple[int, int, int] = TEXT_COLOR) -> None:
+    cursor = x
+    for char in text:
+        _draw_char_unclipped(draw, char, cursor, y, color)
+        cursor += FONT_WIDTH + CHAR_SPACING
+
+
+def _draw_char_unclipped(draw: object, char: str, x: int, y: int, color: tuple[int, int, int]) -> None:
+    pattern = FONT_3X5.get(char, FONT_3X5[" "])
+    for yy, row in enumerate(pattern):
+        for xx, cell in enumerate(row):
+            if cell == "1":
+                target_x = x + xx
+                target_y = y + yy
+                if 0 <= target_x < 32 and 0 <= target_y < 32:
+                    draw.point((target_x, target_y), fill=color)
+
+
+def draw_cost(draw: object, cost: float | None, x: int, y1: int, y2: int) -> None:
+    if cost is None:
+        return
+    dollars = int(cost)
+    cents = round((cost - dollars) * 100)
+    draw_text_unclipped(draw, str(dollars), x, y1, COST_COLOR)
+    draw_text_unclipped(draw, f"{cents:02d}", x, y2, COST_COLOR)

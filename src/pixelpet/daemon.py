@@ -187,6 +187,7 @@ class PixelPetDaemon:
             snapshot.status,
             message,
             marquee_config,
+            cost=snapshot.cost,
         )
 
 
