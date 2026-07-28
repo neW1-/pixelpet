@@ -18,6 +18,7 @@ class OpencodeSession:
     title: str | None
     directory: str | None
     time_updated: int
+    cost: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -93,7 +94,7 @@ class OpencodeStateReader:
             connection.row_factory = sqlite3.Row
             session_rows = connection.execute(
                 """
-                select id, title, directory, time_updated
+                select id, title, directory, time_updated, cost
                 from session
                 where time_archived is null
                 order by time_updated desc
@@ -107,6 +108,7 @@ class OpencodeStateReader:
                     title=string_or_none(row["title"]),
                     directory=string_or_none(row["directory"]),
                     time_updated=int_value(row["time_updated"]) or 0,
+                    cost=float_value(row["cost"]) or 0.0,
                 )
                 for row in session_rows
                 if row["id"]
@@ -194,6 +196,9 @@ def summarize_session(
         ]
     )
     title = session.title or session.directory or session.id[:8]
+    latest_assistant = latest_assistant_message(messages)
+    cost = session.cost if session.cost else _extract_cost(latest_assistant)
+
     permission = latest_tool_part(parts, {"pending"})
     if permission:
         return StatusSnapshot(
@@ -203,11 +208,11 @@ def summarize_session(
             title,
             updated_at_ms,
             "NEEDS APPROVAL",
+            cost=cost,
         )
 
-    latest_assistant = latest_assistant_message(messages)
     if latest_assistant and (error := assistant_error(latest_assistant)):
-        return StatusSnapshot(Status.FAILED_OFFLINE, error, session.id, title, updated_at_ms, "FAILED")
+        return StatusSnapshot(Status.FAILED_OFFLINE, error, session.id, title, updated_at_ms, "FAILED", cost=cost)
 
     running_tool = latest_tool_part(parts, {"running"})
     has_recent_activity = updated_at_ms > 0 and now_ms - updated_at_ms <= active_window_ms
@@ -219,6 +224,7 @@ def summarize_session(
             title,
             updated_at_ms,
             activity_for_tool(running_tool),
+            cost=cost,
         )
 
     if latest_assistant and assistant_is_running(latest_assistant) and has_recent_activity:
@@ -229,6 +235,7 @@ def summarize_session(
             title,
             updated_at_ms,
             "THINKING",
+            cost=cost,
         )
 
     if latest_assistant:
@@ -242,6 +249,7 @@ def summarize_session(
                 title,
                 completed_at,
                 "USING TOOL",
+                cost=cost,
             )
         if completed_at and now_ms - completed_at <= done_timeout_ms:
             return StatusSnapshot(
@@ -251,9 +259,10 @@ def summarize_session(
                 title,
                 completed_at,
                 "DONE",
+                cost=cost,
             )
 
-    return StatusSnapshot(Status.IDLE, "No active OpenCode work.", session.id, title, updated_at_ms, "IDLE")
+    return StatusSnapshot(Status.IDLE, "No active OpenCode work.", session.id, title, updated_at_ms, "IDLE", cost=cost)
 
 
 def latest_assistant_message(messages: list[OpencodeMessage]) -> OpencodeMessage | None:
@@ -394,6 +403,22 @@ def int_value(value: Any) -> int | None:
         except ValueError:
             return None
     return None
+
+
+def float_value(value: Any) -> float | None:
+    if isinstance(value, int | float):
+        return float(value)
+    return None
+
+
+def _extract_cost(latest_assistant: OpencodeMessage | None) -> float | None:
+    if latest_assistant is None:
+        return None
+    cost = latest_assistant.data.get("cost")
+    if cost is None:
+        usage = as_dict(latest_assistant.data.get("usage"))
+        return float_value(usage.get("cost"))
+    return float_value(cost)
 
 
 def now_ms_monotonic() -> int:

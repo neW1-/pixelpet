@@ -172,6 +172,7 @@ def summarize_thread(
         )
 
     lifecycle = latest_turn_lifecycle(events)
+    cost = _extract_codex_cost(events)
     if lifecycle.terminal == "aborted":
         return StatusSnapshot(
             Status.FAILED_OFFLINE,
@@ -180,6 +181,7 @@ def summarize_thread(
             title,
             lifecycle.completed_at_ms or updated_at_ms,
             "FAILED",
+            cost=cost,
         )
 
     if lifecycle.completed_at_ms and now_ms - lifecycle.completed_at_ms <= done_timeout_ms:
@@ -190,6 +192,7 @@ def summarize_thread(
             title,
             lifecycle.completed_at_ms,
             "DONE",
+            cost=cost,
         )
 
     has_recent_activity = updated_at_ms > 0 and now_ms - updated_at_ms <= active_window_ms
@@ -202,9 +205,10 @@ def summarize_thread(
             title,
             updated_at_ms,
             activity_for_call(pending[-1]) if pending else "THINKING",
+            cost=cost,
         )
 
-    return StatusSnapshot(Status.IDLE, "No active Codex work.", row.id, title, updated_at_ms, "IDLE")
+    return StatusSnapshot(Status.IDLE, "No active Codex work.", row.id, title, updated_at_ms, "IDLE", cost=cost)
 
 
 def status_sort_key(snapshot: StatusSnapshot) -> tuple[int, int, int]:
@@ -499,4 +503,19 @@ def string_or_none(value: Any) -> str | None:
 def float_value(value: Any) -> float | None:
     if isinstance(value, int | float):
         return float(value)
+    return None
+
+
+def _extract_codex_cost(events: list[dict[str, Any]]) -> float | None:
+    for event in reversed(events):
+        payload = as_dict(event.get("payload"))
+        if payload.get("type") == "content":
+            usage = as_dict(payload.get("usage"))
+            cost = float_value(usage.get("cost"))
+            if cost is not None:
+                return cost
+        metadata = as_dict(event.get("metadata"))
+        cost = float_value(metadata.get("cost"))
+        if cost is not None:
+            return cost
     return None

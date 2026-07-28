@@ -17,6 +17,7 @@ replay_gifs = false
 [marquee]
 enabled = true
 badge_patterns = true
+show_cost = true
 # source can be "thread_title", "reason", "activity", "status", "status_label",
 # "thread_id", or "rotate".
 source = "rotate"

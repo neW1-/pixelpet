@@ -14,6 +14,7 @@ class StatusSnapshot:
     title: str | None = None
     updated_at_ms: int | None = None
     activity: str | None = None
+    cost: float | None = None
 
 
 class StatusReader(Protocol):
