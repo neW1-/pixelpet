@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
 
-from .assistant_state import StatusSnapshot
+from .assistant_state import SessionUsage, StatusSnapshot
 from .config import default_codex_home
 from .status import Status, status_priority
 
@@ -30,6 +30,7 @@ class ThreadRow:
     git_branch: str | None = None
     updated_at: float | None = None
     updated_at_ms: float | None = None
+    tokens_used: int | None = None
 
 
 @dataclass(frozen=True)
@@ -122,6 +123,7 @@ class CodexStateReader:
                 "git_branch",
                 "updated_at",
                 "updated_at_ms",
+                "tokens_used",
             ]
             select_columns = [
                 column if column in available else f"null as {column}"
@@ -149,6 +151,10 @@ def summarize_thread(
     updated_at_ms = max(row_time_ms(row), latest_event_ms(events))
     title = row.agent_nickname or row.title or row.preview or row.id[:8]
 
+    usage = None
+    if row.tokens_used is not None:
+        usage = SessionUsage(value=int(row.tokens_used), display_kind="tokens")
+
     permission = next((call for call in pending if is_permission_call(call)), None)
     if permission:
         return StatusSnapshot(
@@ -158,6 +164,7 @@ def summarize_thread(
             title,
             updated_at_ms,
             "NEEDS APPROVAL",
+            usage=usage,
         )
 
     needs_input = next((call for call in pending if is_input_call(call)), None)
@@ -169,6 +176,7 @@ def summarize_thread(
             title,
             updated_at_ms,
             "WAITING INPUT",
+            usage=usage,
         )
 
     lifecycle = latest_turn_lifecycle(events)
@@ -182,6 +190,7 @@ def summarize_thread(
             lifecycle.completed_at_ms or updated_at_ms,
             "FAILED",
             cost=cost,
+            usage=usage,
         )
 
     if lifecycle.completed_at_ms and now_ms - lifecycle.completed_at_ms <= done_timeout_ms:
@@ -193,6 +202,7 @@ def summarize_thread(
             lifecycle.completed_at_ms,
             "DONE",
             cost=cost,
+            usage=usage,
         )
 
     has_recent_activity = updated_at_ms > 0 and now_ms - updated_at_ms <= active_window_ms
@@ -206,9 +216,13 @@ def summarize_thread(
             updated_at_ms,
             activity_for_call(pending[-1]) if pending else "THINKING",
             cost=cost,
+            usage=usage,
         )
 
-    return StatusSnapshot(Status.IDLE, "No active Codex work.", row.id, title, updated_at_ms, "IDLE", cost=cost)
+    return StatusSnapshot(
+        Status.IDLE, "No active Codex work.", row.id, title, updated_at_ms, "IDLE",
+        cost=cost, usage=usage,
+    )
 
 
 def status_sort_key(snapshot: StatusSnapshot) -> tuple[int, int, int]:

@@ -15,7 +15,7 @@ from .marquee import STATUS_LABELS, RenderedGif, normalize_message, render_statu
 from .opencode_state import OpencodeStateReader
 from .pet_pack import PetPack
 from .playback import FrameSequence, gif_frame_sequence
-from .status import Status
+from .status import Status, status_priority
 
 
 class Display(Protocol):
@@ -188,6 +188,7 @@ class PixelPetDaemon:
             message,
             marquee_config,
             cost=snapshot.cost,
+            usage=snapshot.usage,
         )
 
 
@@ -197,20 +198,47 @@ def status_line(snapshot: StatusSnapshot, gif_path: Path) -> str:
     return f"status={snapshot.status.value}{activity}{thread} gif={gif_path}"
 
 
-def state_reader_for_config(config: RuntimeConfig) -> StatusReader:
-    if config.assistant_backend == "codex_desktop":
+class CompositeStatusReader:
+    def __init__(self, readers: list[tuple[str, StatusReader]]) -> None:
+        self._readers = readers
+
+    def current_status(self) -> StatusSnapshot:
+        snapshots: list[StatusSnapshot] = []
+        for source, reader in self._readers:
+            try:
+                snap = reader.current_status()
+                snapshots.append(replace(snap, source=source))
+            except Exception:
+                continue
+        if not snapshots:
+            return StatusSnapshot(status=Status.IDLE, reason="all readers failed")
+        return max(snapshots, key=lambda s: (status_priority(s.status), s.updated_at_ms or 0))
+
+
+def _build_single_reader(backend: str, config: RuntimeConfig) -> StatusReader:
+    if backend == "codex_desktop":
         return CodexStateReader(
             codex_home=config.codex_home,
             done_timeout_seconds=config.done_timeout_seconds,
             active_window_seconds=config.active_window_seconds,
         )
-    if config.assistant_backend == "opencode_cli":
+    if backend == "opencode_cli":
         return OpencodeStateReader(
             db_path=config.opencode_db_path,
             done_timeout_seconds=config.done_timeout_seconds,
             active_window_seconds=config.active_window_seconds,
         )
-    raise ValueError(f"Unknown assistant backend: {config.assistant_backend}")
+    raise ValueError(f"Unknown assistant backend: {backend!r}")
+
+
+def state_reader_for_config(config: RuntimeConfig) -> StatusReader:
+    readers: list[tuple[str, StatusReader]] = [
+        (backend, _build_single_reader(backend, config))
+        for backend in config.assistant_backends
+    ]
+    if len(readers) == 1:
+        return readers[0][1]
+    return CompositeStatusReader(readers)
 
 
 def display_for_config(config: RuntimeConfig) -> Display:
@@ -225,9 +253,9 @@ def display_signature(config: RuntimeConfig) -> tuple[bool, str | None, int | No
     return (config.dry_run, config.address, config.brightness, config.save_slot)
 
 
-def reader_signature(config: RuntimeConfig) -> tuple[str, Path, Path, float, float]:
+def reader_signature(config: RuntimeConfig) -> tuple:
     return (
-        config.assistant_backend,
+        config.assistant_backends,
         config.codex_home,
         config.opencode_db_path,
         config.done_timeout_seconds,

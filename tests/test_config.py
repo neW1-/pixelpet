@@ -4,15 +4,15 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from pixelpet.config import ConfigError, default_opencode_db_path, load_config
+from pixelpet.config import ASSISTANT_BACKENDS, ConfigError, default_opencode_db_path, load_config
 
 
 class ConfigTest(unittest.TestCase):
-    def test_default_assistant_backend_is_codex_desktop(self) -> None:
+    def test_default_assistant_backends_is_opencode_cli(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             config = load_config(Path(tmp) / "missing.toml")
 
-            self.assertEqual(config.assistant_backend, "codex_desktop")
+            self.assertEqual(config.assistant_backends, ("opencode_cli",))
             self.assertEqual(config.opencode_db_path, default_opencode_db_path())
 
     def test_loads_marquee_config(self) -> None:
@@ -66,7 +66,7 @@ class ConfigTest(unittest.TestCase):
             self.assertEqual(config.marquee.max_frames, 48)
             self.assertEqual(config.marquee.cache_dir, Path("/tmp/pixelpet-render-cache"))
 
-    def test_loads_assistant_backend_config(self) -> None:
+    def test_loads_assistant_backend_config_scalar(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "config.toml"
             path.write_text(
@@ -85,9 +85,39 @@ class ConfigTest(unittest.TestCase):
 
             config = load_config(path)
 
-            self.assertEqual(config.assistant_backend, "opencode_cli")
+            self.assertEqual(config.assistant_backends, ("opencode_cli",))
             self.assertEqual(config.opencode_db_path, Path("/tmp/opencode.db"))
             self.assertEqual(config.codex_home, Path("/tmp/codex-home"))
+
+    def test_loads_assistant_backends_list(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "config.toml"
+            path.write_text(
+                """
+                [assistant]
+                backends = ["opencode_cli", "codex_desktop"]
+                """,
+                encoding="utf-8",
+            )
+
+            config = load_config(path)
+
+            self.assertEqual(config.assistant_backends, ("opencode_cli", "codex_desktop"))
+
+    def test_assistant_backends_list_accepts_aliases(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "config.toml"
+            path.write_text(
+                """
+                [assistant]
+                backends = ["opencode", "codex"]
+                """,
+                encoding="utf-8",
+            )
+
+            config = load_config(path)
+
+            self.assertEqual(config.assistant_backends, ("opencode_cli", "codex_desktop"))
 
     def test_unknown_assistant_backend_is_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -96,6 +126,20 @@ class ConfigTest(unittest.TestCase):
                 """
                 [assistant]
                 backend = "unknown"
+                """,
+                encoding="utf-8",
+            )
+
+            with self.assertRaises(ConfigError):
+                load_config(path)
+
+    def test_unknown_assistant_backend_in_list_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "config.toml"
+            path.write_text(
+                """
+                [assistant]
+                backends = ["opencode_cli", "unknown"]
                 """,
                 encoding="utf-8",
             )

@@ -5,6 +5,7 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
+from .assistant_state import SessionUsage
 from .config import MarqueeConfig
 from .status import Status
 
@@ -126,6 +127,7 @@ def render_status_gif(
     message: str | None,
     config: MarqueeConfig,
     cost: float | None = None,
+    usage: SessionUsage | None = None,
 ) -> RenderedGif:
     normalized = normalize_message(message, status, config.max_chars)
     if not config.enabled and not config.badge_patterns:
@@ -137,7 +139,7 @@ def render_status_gif(
         )
 
     render_message = normalized if config.enabled else STATUS_LABELS[status]
-    key = render_key(base_gif, pet_id, status, render_message, config, cost=cost)
+    key = render_key(base_gif, pet_id, status, render_message, config, cost=cost, usage=usage)
     output = config.cache_dir.expanduser() / f"{key}.gif"
     duration_seconds = marquee_duration_seconds(
         render_message,
@@ -158,6 +160,7 @@ def render_status_gif(
             draw_badge=config.badge_patterns,
             show_cost=config.show_cost,
             cost=cost,
+            usage=usage,
         )
     return RenderedGif(output, key, render_message, duration_seconds)
 
@@ -169,9 +172,11 @@ def render_key(
     message: str,
     config: MarqueeConfig,
     cost: float | None = None,
+    usage: SessionUsage | None = None,
 ) -> str:
     stat = base_gif.stat()
     cost_part = f"{cost:.4f}" if cost is not None else "no-cost"
+    usage_part = f"tokens={usage.value}" if usage is not None else "no-usage"
     payload = "|".join(
         [
             pet_id,
@@ -189,6 +194,7 @@ def render_key(
             str(stat.st_mtime_ns),
             str(stat.st_size),
             cost_part,
+            usage_part,
         ]
     )
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:24]
@@ -206,6 +212,7 @@ def compose_marquee_gif(
     draw_badge: bool = True,
     show_cost: bool = True,
     cost: float | None = None,
+    usage: SessionUsage | None = None,
 ) -> None:
     try:
         from PIL import Image, ImageDraw, ImageSequence
@@ -229,7 +236,7 @@ def compose_marquee_gif(
         if show_message:
             draw_text(draw, message, LANE_X + offset, TEXT_Y)
         if show_cost:
-            draw_cost(draw, cost, COST_X, COST_Y_LINE1, COST_Y_LINE2)
+            draw_usage(draw, usage, cost, COST_X, COST_Y_LINE1, COST_Y_LINE2)
         frames.append(frame)
 
     for tail_index in range(TRAILING_CLEAR_FRAMES):
@@ -239,7 +246,7 @@ def compose_marquee_gif(
         if draw_badge:
             draw_status_badge(draw, status, index)
         if show_cost:
-            draw_cost(draw, cost, COST_X, COST_Y_LINE1, COST_Y_LINE2)
+            draw_usage(draw, usage, cost, COST_X, COST_Y_LINE1, COST_Y_LINE2)
         frames.append(frame)
 
     frames[0].save(
@@ -428,3 +435,39 @@ def draw_cost(draw: object, cost: float | None, x: int, y1: int, y2: int) -> Non
     cents = round((cost - dollars) * 100)
     draw_text_unclipped(draw, str(dollars), x, y1, COST_COLOR)
     draw_text_unclipped(draw, f"{cents:02d}", x, y2, COST_COLOR)
+
+
+def draw_usage(
+    draw: object,
+    usage: SessionUsage | None,
+    cost: float | None,
+    x: int,
+    y1: int,
+    y2: int,
+) -> None:
+    if usage is not None and usage.display_kind == "tokens":
+        draw_token_usage(draw, usage.value, x, y1, y2)
+    else:
+        draw_cost(draw, cost, x, y1, y2)
+
+
+def draw_token_usage(draw: object, tokens: int, x: int, y1: int, y2: int) -> None:
+    if tokens < 1000:
+        line1 = str(tokens)
+        line2 = " "
+    elif tokens < 10_000:
+        value = tokens / 1000
+        line1 = f"{value:.1f}"
+        line2 = "K"
+    elif tokens < 1_000_000:
+        line1 = str(tokens // 1000)
+        line2 = "K"
+    elif tokens < 10_000_000:
+        value = tokens / 1_000_000
+        line1 = f"{value:.1f}"
+        line2 = "M"
+    else:
+        line1 = str(tokens // 1_000_000)
+        line2 = "M"
+    draw_text_unclipped(draw, line1, x, y1, COST_COLOR)
+    draw_text_unclipped(draw, line2, x, y2, COST_COLOR)

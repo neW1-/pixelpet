@@ -31,7 +31,7 @@ scroll_step_px = 2
 max_frames = 72
 
 [assistant]
-backend = "opencode"
+backends = ["opencode", "codex_desktop"]
 [codex]
 home = "/Users/martin/.codex"
 
