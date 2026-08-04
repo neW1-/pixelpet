@@ -426,6 +426,34 @@ class MarqueeTest(unittest.TestCase):
             pixels = self._cost_area_pixels(frames[0])
             self.assertTrue(len(pixels) > 0, "No small token value pixels rendered")
 
+    def test_token_usage_wraps_digits_and_suffix_to_lower_rows(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            base = root / "base.gif"
+            create_base_gif(base)
+
+            rendered = render_status_gif(
+                base,
+                "test",
+                Status.WORKING,
+                "working",
+                MarqueeConfig(cache_dir=root / "cache", frame_ms=40),
+                usage=SessionUsage(value=5432, display_kind="tokens"),
+            )
+            with Image.open(rendered.path) as image:
+                frames = gif_frames(image)
+            frame = frames[0]
+
+            def painted(x: int, y: int) -> bool:
+                p = frame.getpixel((x, y))
+                return p[2] > p[0] and p != (20, 20, 20)
+
+            self.assertTrue(painted(0, 10), "digit 1 not on row1")
+            self.assertTrue(painted(5, 14), "decimal point not on row1")
+            self.assertTrue(painted(0, 16), "digit 3 not on row2")
+            self.assertFalse(painted(8, 10), "digit 3 leaked to row1 right of frame")
+            self.assertTrue(painted(0, 22), "K suffix not on row3")
+
     def test_token_usage_without_usage_falls_back_to_cost(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

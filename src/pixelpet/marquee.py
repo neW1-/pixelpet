@@ -452,22 +452,23 @@ def draw_usage(
 
 
 def draw_token_usage(draw: object, tokens: int, x: int, y1: int, y2: int) -> None:
+    line1, line2 = token_lines(tokens)
+    row_gap = y2 - y1
+    for index, char in enumerate(line1):
+        row = y1 if index < 2 else y2
+        col = x + (index % 2) * (FONT_WIDTH + CHAR_SPACING)
+        draw_text_unclipped(draw, char, col, row, COST_COLOR)
+    if line2 != " ":
+        draw_text_unclipped(draw, line2, x, y2 + row_gap, COST_COLOR)
+
+
+def token_lines(tokens: int) -> tuple[str, str]:
     if tokens < 1000:
-        line1 = str(tokens)
-        line2 = " "
+        return str(tokens), " "
     elif tokens < 10_000:
-        value = tokens / 1000
-        line1 = f"{value:.1f}"
-        line2 = "K"
+        return f"{tokens / 1000:.1f}", "K"
     elif tokens < 1_000_000:
-        line1 = str(tokens // 1000)
-        line2 = "K"
+        return str(tokens // 1000), "K"
     elif tokens < 10_000_000:
-        value = tokens / 1_000_000
-        line1 = f"{value:.1f}"
-        line2 = "M"
-    else:
-        line1 = str(tokens // 1_000_000)
-        line2 = "M"
-    draw_text_unclipped(draw, line1, x, y1, COST_COLOR)
-    draw_text_unclipped(draw, line2, x, y2, COST_COLOR)
+        return f"{tokens / 1_000_000:.1f}", "M"
+    return str(tokens // 1_000_000), "M"
