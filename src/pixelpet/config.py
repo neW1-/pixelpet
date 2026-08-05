@@ -77,7 +77,7 @@ class RuntimeConfig:
     stream_frame_ms: int = 220
     pet_id: str = "dino"
     assets_dir: Path = default_assets_dir()
-    assistant_backend: str = "codex_desktop"
+    assistant_backends: tuple[str, ...] = ("opencode_cli",)
     codex_home: Path = default_codex_home()
     opencode_db_path: Path = default_opencode_db_path()
     poll_seconds: float = 3.0
@@ -114,7 +114,7 @@ def load_config(path: Path | None = None) -> RuntimeConfig:
         stream_frame_ms=_optional_int(display.get("stream_frame_ms"), default=220) or 220,
         pet_id=_optional_str(pet.get("id")) or "dino",
         assets_dir=_path(pet.get("assets_dir"), default_assets_dir()),
-        assistant_backend=_assistant_backend(assistant.get("backend")),
+        assistant_backends=_assistant_backends(assistant.get("backends") if "backends" in assistant else assistant.get("backend")),
         codex_home=_path(codex.get("home"), default_codex_home()),
         opencode_db_path=_path(opencode.get("db_path"), default_opencode_db_path()),
         poll_seconds=_optional_float(daemon.get("poll_seconds"), default=3.0),
@@ -150,7 +150,7 @@ def merge_overrides(config: RuntimeConfig, **overrides: Any) -> RuntimeConfig:
         "stream_frame_ms": config.stream_frame_ms,
         "pet_id": config.pet_id,
         "assets_dir": config.assets_dir,
-        "assistant_backend": config.assistant_backend,
+        "assistant_backends": config.assistant_backends,
         "codex_home": config.codex_home,
         "opencode_db_path": config.opencode_db_path,
         "poll_seconds": config.poll_seconds,
@@ -163,6 +163,8 @@ def merge_overrides(config: RuntimeConfig, **overrides: Any) -> RuntimeConfig:
     }
     for key, value in overrides.items():
         if value is not None:
+            if key == "assistant_backends" and isinstance(value, list):
+                value = tuple(value)
             values[key] = value
     return RuntimeConfig(**values)
 
@@ -236,19 +238,37 @@ def _playback_mode(value: object) -> str:
     return mode
 
 
-def _assistant_backend(value: object) -> str:
-    backend = (_optional_str(value) or "codex_desktop").lower()
+def _assistant_backends(value: object) -> tuple[str, ...]:
     aliases = {
         "codex": "codex_desktop",
         "codex-desktop": "codex_desktop",
         "opencode": "opencode_cli",
         "opencode-cli": "opencode_cli",
     }
-    backend = aliases.get(backend, backend)
-    if backend not in ASSISTANT_BACKENDS:
-        allowed = ", ".join(ASSISTANT_BACKENDS)
-        raise ConfigError(f"Unknown assistant backend {backend!r}; expected one of: {allowed}")
-    return backend
+
+    if value is None:
+        return ("opencode_cli",)
+
+    if isinstance(value, str):
+        values = [value]
+    elif isinstance(value, list | tuple):
+        values = list(value)
+    else:
+        raise ConfigError(f"Invalid assistant backends: {value!r}")
+
+    if not values:
+        return ("opencode_cli",)
+
+    backends: list[str] = []
+    for b in values:
+        if not isinstance(b, str):
+            raise ConfigError(f"Invalid assistant backend: {b!r}")
+        normalized = aliases.get(b.lower(), b.lower())
+        if normalized not in ASSISTANT_BACKENDS:
+            allowed = ", ".join(ASSISTANT_BACKENDS)
+            raise ConfigError(f"Unknown assistant backend {normalized!r}; expected one of: {allowed}")
+        backends.append(normalized)
+    return tuple(backends)
 
 
 def _path(value: object, default: Path) -> Path:

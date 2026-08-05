@@ -7,7 +7,7 @@ from pathlib import Path
 
 from PIL import Image, ImageSequence
 
-from pixelpet.codex_state import StatusSnapshot
+from pixelpet.assistant_state import SessionUsage, StatusSnapshot
 from pixelpet.config import MarqueeConfig, RuntimeConfig
 from pixelpet.daemon import PixelPetDaemon, effective_marquee_config, marquee_message
 from pixelpet.marquee import normalize_message, render_status_gif, scroll_positions
@@ -375,6 +375,101 @@ class MarqueeTest(unittest.TestCase):
             asyncio.run(daemon.tick())
 
             self.assertEqual(len(display.paths), 2)
+
+    def _cost_area_pixels(self, frame: Image.Image) -> list:
+        """Return non-background pixels in the cost area (y=10..21, x=0..9)."""
+        pixels = []
+        for y in range(10, 22):
+            for x in range(3):
+                p = frame.getpixel((x, y))
+                if p != (20, 20, 20):
+                    pixels.append((x, y, p))
+        return pixels
+
+    def test_token_usage_draws_in_cost_slot(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            base = root / "base.gif"
+            create_base_gif(base)
+            usage = SessionUsage(value=1250000, display_kind="tokens")
+
+            rendered = render_status_gif(
+                base,
+                "test",
+                Status.WORKING,
+                "working",
+                MarqueeConfig(cache_dir=root / "cache", frame_ms=40),
+                usage=usage,
+            )
+
+            with Image.open(rendered.path) as image:
+                frames = gif_frames(image)
+            pixels = self._cost_area_pixels(frames[0])
+            self.assertTrue(len(pixels) > 0, "No token usage pixels rendered")
+            # All painted pixels should have COST_COLOR blue tint
+            for x, y, p in pixels:
+                self.assertGreater(p[2], p[0], f"pixel ({x},{y}) lacks blue tint: {p}")
+
+    def test_token_usage_abbreviation_small_values(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            base = root / "base.gif"
+            create_base_gif(base)
+
+            rendered = render_status_gif(
+                base, "test", Status.WORKING, "working",
+                MarqueeConfig(cache_dir=root / "cache", frame_ms=40),
+                usage=SessionUsage(value=500, display_kind="tokens"),
+            )
+            with Image.open(rendered.path) as image:
+                frames = gif_frames(image)
+            pixels = self._cost_area_pixels(frames[0])
+            self.assertTrue(len(pixels) > 0, "No small token value pixels rendered")
+
+    def test_token_usage_wraps_digits_and_suffix_to_lower_rows(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            base = root / "base.gif"
+            create_base_gif(base)
+
+            rendered = render_status_gif(
+                base,
+                "test",
+                Status.WORKING,
+                "working",
+                MarqueeConfig(cache_dir=root / "cache", frame_ms=40),
+                usage=SessionUsage(value=5432, display_kind="tokens"),
+            )
+            with Image.open(rendered.path) as image:
+                frames = gif_frames(image)
+            frame = frames[0]
+
+            def painted(x: int, y: int) -> bool:
+                p = frame.getpixel((x, y))
+                return p[2] > p[0] and p != (20, 20, 20)
+
+            self.assertTrue(painted(0, 10), "digit 1 not on row1")
+            self.assertTrue(painted(5, 14), "decimal point not on row1")
+            self.assertTrue(painted(0, 16), "digit 3 not on row2")
+            self.assertFalse(painted(8, 10), "digit 3 leaked to row1 right of frame")
+            self.assertTrue(painted(0, 22), "K suffix not on row3")
+
+    def test_token_usage_without_usage_falls_back_to_cost(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            base = root / "base.gif"
+            create_base_gif(base)
+
+            rendered = render_status_gif(
+                base, "test", Status.DONE, "done",
+                MarqueeConfig(cache_dir=root / "cache", frame_ms=40),
+                cost=12.34,
+            )
+
+            with Image.open(rendered.path) as image:
+                frames = gif_frames(image)
+            pixels = self._cost_area_pixels(frames[0])
+            self.assertTrue(len(pixels) > 0, "No cost pixels rendered")
 
     def test_daemon_reason_source_uploads_when_reason_changes(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

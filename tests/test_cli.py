@@ -24,8 +24,23 @@ class CliConfigTest(unittest.TestCase):
 
         config = config_from_args(args)
 
-        self.assertEqual(config.assistant_backend, "opencode_cli")
+        self.assertEqual(config.assistant_backends, ("opencode_cli",))
         self.assertEqual(config.opencode_db_path, Path("/tmp/opencode.db"))
+
+    def test_run_accepts_multiple_assistant_backends(self) -> None:
+        args = build_parser().parse_args(
+            [
+                "run",
+                "--assistant-backend",
+                "opencode_cli",
+                "--assistant-backend",
+                "codex_desktop",
+            ]
+        )
+
+        config = config_from_args(args)
+
+        self.assertEqual(config.assistant_backends, ("opencode_cli", "codex_desktop"))
 
     def test_status_uses_selected_backend(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

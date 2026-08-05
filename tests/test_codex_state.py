@@ -228,6 +228,52 @@ class CodexStateReaderTest(unittest.TestCase):
 
             self.assertEqual(fx.reader().current_status().status, Status.IDLE)
 
+    def test_tokens_used_is_extracted_from_thread(self) -> None:
+        with fixture() as fx:
+            rollout = fx.rollout(
+                event("event_msg", {"type": "task_started"}, NOW_MS - 5_000),
+            )
+            fx.thread("t1", rollout, tokens_used=1250000)
+
+            status = fx.reader().current_status()
+
+            self.assertEqual(status.status, Status.WORKING)
+            self.assertIsNotNone(status.usage)
+            if status.usage:
+                self.assertEqual(status.usage.value, 1250000)
+                self.assertEqual(status.usage.display_kind, "tokens")
+
+    def test_tokens_used_missing_column_graceful(self) -> None:
+        with fixture() as fx:
+            # Create a fixture DB without tokens_used column, insert a row directly
+            rollout = fx.rollout(event("event_msg", {"type": "task_started"}, NOW_MS - 5_000))
+            connection = sqlite3.connect(fx.db)
+            try:
+                connection.execute("drop table threads")
+                connection.execute(
+                    "create table threads ("
+                    "id text, rollout_path text, cwd text, title text, "
+                    "preview text, source text, thread_source text, agent_nickname text, "
+                    "cli_version text, git_branch text, updated_at integer, "
+                    "updated_at_ms integer, archived integer)"
+                )
+                connection.execute(
+                    "insert into threads (id, rollout_path, cwd, title, preview, source, "
+                    "thread_source, agent_nickname, cli_version, git_branch, updated_at, "
+                    "updated_at_ms, archived) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    ("t1", str(rollout), str(fx.root), "Test thread", "Preview",
+                     "vscode", "user", None, "test", "main",
+                     (NOW_MS - 5_000) // 1000, NOW_MS - 5_000, 0),
+                )
+                connection.commit()
+            finally:
+                connection.close()
+
+            status = fx.reader().current_status()
+
+            self.assertEqual(status.status, Status.WORKING)
+            self.assertIsNone(status.usage)
+
     def test_missing_db_is_failed_offline(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             reader = CodexStateReader(
@@ -270,7 +316,8 @@ class Fixture:
                   git_branch text,
                   updated_at integer,
                   updated_at_ms integer,
-                  archived integer
+                  archived integer,
+                  tokens_used integer
                 )
                 """
             )
@@ -289,13 +336,14 @@ class Fixture:
         source: str = "vscode",
         thread_source: str = "user",
         updated_at_ms: int = NOW_MS - 1_000,
+        tokens_used: int | None = None,
     ) -> None:
         connection = sqlite3.connect(self.db)
         try:
             connection.execute(
                 """
                 insert into threads values (
-                  ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+                  ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
                 )
                 """,
                 (
@@ -312,6 +360,7 @@ class Fixture:
                     updated_at_ms // 1000,
                     updated_at_ms,
                     0,
+                    tokens_used,
                 ),
             )
             connection.commit()

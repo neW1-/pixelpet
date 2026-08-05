@@ -7,6 +7,12 @@ from .status import Status
 
 
 @dataclass(frozen=True)
+class SessionUsage:
+    value: int
+    display_kind: str = "tokens"
+
+
+@dataclass(frozen=True)
 class StatusSnapshot:
     status: Status
     reason: str
@@ -15,6 +21,8 @@ class StatusSnapshot:
     updated_at_ms: int | None = None
     activity: str | None = None
     cost: float | None = None
+    usage: SessionUsage | None = None
+    source: str = ""
 
 
 class StatusReader(Protocol):

@@ -109,18 +109,40 @@ With `badge_patterns = true`, PixelPet redraws the upper-left badge at runtime:
 orange blinks for approval, blue pulses for input, red flashes for failed/offline,
 and working uses the original rotating cyan dots.
 
+## Cost / Usage Display
+
+A 2-line slot below the badge (x=0, y1=10, y2=16) shows per-session usage:
+
+| Backend | Line 1 | Line 2 | Example |
+|---------|--------|--------|---------|
+| OpenCode | Dollars | Cents | `12` / `34` ($12.34) |
+| Codex | Mantissa | Unit | `1.5` / `M` (1.5M tokens) |
+
+Token abbreviation:
+
+| tokens_used | Line 1 | Line 2 |
+|-------------|--------|--------|
+| 0–999 | `###` | ` ` |
+| 1K–9,999 | `#.#` | `K` |
+| 10K–999K | `###` | `K` |
+| 1M–9.9M | `#.#` | `M` |
+| 10M+ | `###` | `M` |
+
+Controlled by `show_cost` under `[marquee]` (default `true`). The display
+disappears when the value is zero or unavailable.
+
 ## Assistant Backends
 
 PixelPet supports two assistant state backends:
 
-- `codex_desktop`: reads Codex Desktop state from `state_5.sqlite` under the configured Codex home.
 - `opencode_cli`: reads the local OpenCode SQLite database directly, across all unarchived OpenCode sessions.
+- `codex_desktop`: reads Codex Desktop state from `state_5.sqlite` under the configured Codex home.
 
-Select the backend in `config.toml`:
+### Single backend
 
 ```toml
 [assistant]
-backend = "codex_desktop" # or "opencode_cli"
+backend = "opencode_cli" # or "codex_desktop"
 
 [codex]
 home = "/Users/martin/.codex"
@@ -129,13 +151,37 @@ home = "/Users/martin/.codex"
 db_path = "/Users/martin/.local/share/opencode/opencode.db"
 ```
 
+### Dual backend (cycles between both)
+
+```toml
+[assistant]
+backends = ["opencode_cli", "codex_desktop"]
+
+[codex]
+home = "/Users/martin/.codex"
+
+[opencode]
+db_path = "/Users/martin/.local/share/opencode/opencode.db"
+```
+
+With dual backends, the pet polls both each tick and shows whichever has the
+most active status (highest priority, then most recent).
+
 TOML string values must be quoted. Use `backend = "opencode_cli"`, not
 `backend = opencode_cli`.
 
-`codex_desktop` remains the default for existing configs. `opencode_cli`
-passively reads OpenCode state without launching `opencode` or requiring
-`opencode serve`. `pixelpet run` and `pixelpet status` also accept
-`--assistant-backend` and `--opencode-db-path` for temporary overrides.
+`opencode_cli` is the default when no config file exists. It passively reads
+OpenCode state without launching `opencode` or requiring `opencode serve`.
+`pixelpet run` and `pixelpet status` also accept `--assistant-backend`
+(repeatable) and `--opencode-db-path` for temporary overrides.
+
+```bash
+# Single backend override
+pixelpet run --assistant-backend opencode_cli
+
+# Dual backend override
+pixelpet run --assistant-backend opencode_cli --assistant-backend codex_desktop
+```
 
 OpenCode status mapping uses the existing PixelPet states:
 
