@@ -49,7 +49,7 @@ class HotReloadTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             db_path = Path(tmp) / "opencode.db"
             config = RuntimeConfig(
-                assistant_backend="opencode_cli",
+                assistant_backends=("opencode_cli",),
                 opencode_db_path=db_path,
             )
 
@@ -77,7 +77,7 @@ class HotReloadTest(unittest.TestCase):
                 dry_run=True,
                 pet_id="one",
                 assets_dir=assets_dir,
-                assistant_backend="opencode_cli",
+                assistant_backends=("opencode_cli",),
                 opencode_db_path=root / "opencode.db",
             )
             asyncio.run(daemon.reconfigure(next_config, pet))

@@ -111,31 +111,49 @@ and working uses the original rotating cyan dots.
 
 ## Assistant Backends
 
-PixelPet supports two assistant state backends:
+PixelPet supports three assistant state backends:
 
 - `codex_desktop`: reads Codex Desktop state from `state_5.sqlite` under the configured Codex home.
 - `opencode_cli`: reads the local OpenCode SQLite database directly, across all unarchived OpenCode sessions.
+- `vscode_copilot`: reads VS Code Copilot agent-mode transcripts
+  (`workspaceStorage/<hash>/GitHub.copilot-chat/transcripts/*.jsonl`) under the
+  VS Code user data directory, enriched with session metadata from
+  `globalStorage/github.copilot-chat/session-store.db`.
 
-Select the backend in `config.toml`:
+Select the backend in `config.toml`. `backend` accepts one name or a list to
+watch several at once (the most recently active session wins):
 
 ```toml
 [assistant]
-backend = "codex_desktop" # or "opencode_cli"
+backend = "codex_desktop"   # single: codex_desktop | opencode_cli | vscode_copilot
+# or watch several backends at once:
+backend = ["codex_desktop", "opencode_cli", "vscode_copilot"]
 
 [codex]
 home = "/Users/martin/.codex"
 
 [opencode]
 db_path = "/Users/martin/.local/share/opencode/opencode.db"
+
+[vscode]
+user_dir = "/Users/martin/Library/Application Support/Code"
 ```
 
 TOML string values must be quoted. Use `backend = "opencode_cli"`, not
 `backend = opencode_cli`.
 
+`vscode_copilot` uses the platform VS Code user data dir by default (`Code`,
+`Code - Insiders`, or `VSCodium`), which `[vscode] user_dir` overrides. Status
+mapping: an open agent turn or tool execution means `working`, a recently
+completed turn is `done`, and stale or missing sessions are `idle`. The
+transcripts record no pending-approval or waiting-input marker, so
+`vscode_copilot` never emits `permission_required` or `needs_input`.
+
 `codex_desktop` remains the default for existing configs. `opencode_cli`
 passively reads OpenCode state without launching `opencode` or requiring
 `opencode serve`. `pixelpet run` and `pixelpet status` also accept
-`--assistant-backend` and `--opencode-db-path` for temporary overrides.
+`--assistant-backend` (repeatable for multiple backends), `--opencode-db-path`,
+and `--vscode-user-dir` for temporary overrides.
 
 OpenCode status mapping uses the existing PixelPet states:
 
