@@ -107,7 +107,20 @@ badge_patterns = true
 
 With `badge_patterns = true`, PixelPet redraws the upper-left badge at runtime:
 orange blinks for approval, blue pulses for input, red flashes for failed/offline,
-and working uses the original rotating cyan dots.
+gone to green on done. While working, the badge color follows the active agent:
+blue for `vscode_copilot`, red for `codex_desktop`, orange for `opencode_cli`.
+
+### Cost / token overlay
+
+The bottom of the marquee shows usage for the active agent under `show_cost = true`:
+
+- `opencode_cli` shows a dollar `cost` (e.g. `0.42` → `0` / `42`).
+- `codex_desktop` shows raw token count from the Codex `threads.tokens_used`
+  column (e.g. `37,394` → `37` / `K`).
+- `vscode_copilot` has no usage data and draws nothing.
+
+Both values are folded into the rendered GIF cache key, so a new cost or token
+count re-renders instead of replaying a stale GIF.
 
 ## Assistant Backends
 
@@ -115,10 +128,13 @@ PixelPet supports three assistant state backends:
 
 - `codex_desktop`: reads Codex Desktop state from `state_5.sqlite` under the configured Codex home.
 - `opencode_cli`: reads the local OpenCode SQLite database directly, across all unarchived OpenCode sessions.
-- `vscode_copilot`: reads VS Code Copilot agent-mode transcripts
-  (`workspaceStorage/<hash>/GitHub.copilot-chat/transcripts/*.jsonl`) under the
-  VS Code user data directory, enriched with session metadata from
-  `globalStorage/github.copilot-chat/session-store.db`.
+- `vscode_copilot`: reads VS Code Copilot agent-mode session state. VS Code
+  stores live sessions in `workspaceStorage/<hash>/chatSessions/*.jsonl`
+  (mutation logs) and `globalStorage/emptyWindowChatSessions/*.jsonl`
+  (snapshots); legacy sessions live in
+  `workspaceStorage/<hash>/GitHub.copilot-chat/transcripts/*.jsonl`. All three
+  are read under the VS Code user data directory, enriched with session metadata
+  from `globalStorage/github.copilot-chat/session-store.db`.
 
 Select the backend in `config.toml`. `backend` accepts one name or a list to
 watch several at once (the most recently active session wins):

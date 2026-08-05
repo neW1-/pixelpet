@@ -7,12 +7,22 @@ that returns one `StatusSnapshot` per poll.
 
 ## Data source
 
-- **Primary:** Copilot agent transcripts, per-workspace JSONL files:
+VS Code changed where it stores Copilot sessions, so the reader opens all three:
+
+- **Primary (legacy):** Copilot agent transcripts, per-workspace JSONL files:
   `<User>/workspaceStorage/<hash>/GitHub.copilot-chat/transcripts/<sessionId>.jsonl`
-  (glob `*/GitHub.copilot-chat/transcripts/*.jsonl` under `<User>/workspaceStorage`)
+  (glob `*/GitHub.copilot-chat/transcripts/*.jsonl` under `<User>/workspaceStorage`).
+- **Mutation log (current):** `<User>/workspaceStorage/<hash>/chatSessions/<sessionId>.jsonl`,
+  a `{"kind":N,"k":[...],"v":...}` op log; `read_copilot_session_state` replays
+  the ops into a session snapshot. Kinds `0/1/2` set a snapshot / scalar / array.
+- **Empty-window snapshots:** `<User>/globalStorage/emptyWindowChatSessions/<sessionId>.jsonl`
+  - a single `{"kind":0,"v":{...}}` session snapshot.
 - **Metadata enrichment:** `<User>/globalStorage/github.copilot-chat/session-store.db`
   `sessions` table (id, cwd, repository, agent_name, summary, updated_at) keyed by
-  session id == transcript filename. Yields real titles, workspaces, and agent names.
+  session id == file stem. Yields real titles, workspaces, and agent names.
+- Files are deduped by session id, newest mtime wins; `snapshot_events` maps the
+  state's `requests` / `toolInvocationSerialized` / `modelState.completedAt` into the
+  same event shape the legacy parser emits.
 - `<User>` resolution: `VSCODE_USER_DIR` env -> `--vscode-user-dir` -> platform
   default (`~/Library/Application Support/Code`, `~/.config/Code`,
   `%APPDATA%\Code`) with `Code - Insiders` / `VSCodium` fallbacks.
@@ -30,6 +40,16 @@ assistant.turn_end     { data: { turnId } }
 ```
 
 Every entry has `id`, ISO `timestamp`, `parentId`.
+
+### Session-state schema (chatSessions / emptyWindowChatSessions)
+
+A snapshot `v` holds `requests[]`; each request carries `timestamp`,
+`responseTimestamp`, `message.text`, a `response[]` of text values and
+`toolInvocationSerialized` items (`toolCallId`, `toolId`,
+`isComplete`), and `modelState.completedAt`. Work is `in progress` while any
+tool lacks `isComplete` or the latest request has no `completedAt`; a request
+with `completedAt` maps to a closed turn (`DONE`). Non-empty `pendingRequests`
+signal queued agent work (`WORKING`).
 
 ## Status inference
 
