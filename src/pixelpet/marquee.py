@@ -24,7 +24,7 @@ COST_Y_LINE1 = 10
 COST_Y_LINE2 = 16
 COST_COLOR = (130, 180, 220)
 TRAILING_CLEAR_FRAMES = 6
-BADGE_PATTERN_VERSION = "badge-v4"
+BADGE_PATTERN_VERSION = "badge-v5"
 BADGE_BG = (2, 4, 8)
 BADGE_BLACK = (0, 0, 0)
 BADGE_DIM = (34, 40, 50)
@@ -127,6 +127,7 @@ def render_status_gif(
     message: str | None,
     config: MarqueeConfig,
     cost: float | None = None,
+    backend: str | None = None,
     usage: SessionUsage | None = None,
 ) -> RenderedGif:
     normalized = normalize_message(message, status, config.max_chars)
@@ -139,7 +140,7 @@ def render_status_gif(
         )
 
     render_message = normalized if config.enabled else STATUS_LABELS[status]
-    key = render_key(base_gif, pet_id, status, render_message, config, cost=cost, usage=usage)
+    key = render_key(base_gif, pet_id, status, render_message, config, cost=cost, backend=backend, usage=usage)
     output = config.cache_dir.expanduser() / f"{key}.gif"
     duration_seconds = marquee_duration_seconds(
         render_message,
@@ -160,6 +161,7 @@ def render_status_gif(
             draw_badge=config.badge_patterns,
             show_cost=config.show_cost,
             cost=cost,
+            backend=backend,
             usage=usage,
         )
     return RenderedGif(output, key, render_message, duration_seconds)
@@ -172,6 +174,7 @@ def render_key(
     message: str,
     config: MarqueeConfig,
     cost: float | None = None,
+    backend: str | None = None,
     usage: SessionUsage | None = None,
 ) -> str:
     stat = base_gif.stat()
@@ -194,6 +197,7 @@ def render_key(
             str(stat.st_mtime_ns),
             str(stat.st_size),
             cost_part,
+            backend or "any",
             usage_part,
         ]
     )
@@ -212,6 +216,7 @@ def compose_marquee_gif(
     draw_badge: bool = True,
     show_cost: bool = True,
     cost: float | None = None,
+    backend: str | None = None,
     usage: SessionUsage | None = None,
 ) -> None:
     try:
@@ -232,7 +237,7 @@ def compose_marquee_gif(
         frame = base_frames[index % len(base_frames)].copy()
         draw = ImageDraw.Draw(frame)
         if draw_badge:
-            draw_status_badge(draw, status, index)
+            draw_status_badge(draw, status, index, backend)
         if show_message:
             draw_text(draw, message, LANE_X + offset, TEXT_Y)
         if show_cost:
@@ -244,7 +249,7 @@ def compose_marquee_gif(
         frame = base_frames[index % len(base_frames)].copy()
         draw = ImageDraw.Draw(frame)
         if draw_badge:
-            draw_status_badge(draw, status, index)
+            draw_status_badge(draw, status, index, backend)
         if show_cost:
             draw_usage(draw, usage, cost, COST_X, COST_Y_LINE1, COST_Y_LINE2)
         frames.append(frame)
@@ -302,7 +307,7 @@ def measure_text(text: str) -> int:
     return len(text) * (FONT_WIDTH + CHAR_SPACING) - CHAR_SPACING
 
 
-def draw_status_badge(draw: object, status: Status, frame_index: int) -> None:
+def draw_status_badge(draw: object, status: Status, frame_index: int, backend: str | None = None) -> None:
     if status == Status.PERMISSION_REQUIRED:
         bright = (frame_index // 3) % 2 == 0
         color = BADGE_ORANGE if bright else BADGE_ORANGE_DIM
@@ -315,7 +320,7 @@ def draw_status_badge(draw: object, status: Status, frame_index: int) -> None:
         color = BADGE_RED if bright else BADGE_RED_DIM
         draw_badge_shell(draw, color, icon="X", fill=bright)
     elif status == Status.WORKING:
-        draw_working_badge(draw, frame_index)
+        draw_working_badge(draw, frame_index, backend)
     elif status == Status.DONE:
         draw_badge_shell(draw, BADGE_GREEN, icon="CHECK")
     else:
@@ -347,13 +352,27 @@ def draw_badge_symbol(draw: object, icon: str, color: tuple[int, int, int]) -> N
                 draw_point(draw, x + xx, y + yy, color)
 
 
-def draw_working_badge(draw: object, frame_index: int) -> None:
+def draw_working_badge(draw: object, frame_index: int, backend: str | None = None) -> None:
     fill_rect(draw, 0, 0, 9, 9, BADGE_BG)
+    active, base = working_badge_colors(backend)
+    dim = _dim(base)
     points = ((4, 1), (7, 4), (4, 7), (1, 4))
     for index, (x, y) in enumerate(points):
-        color = BADGE_CYAN if index == frame_index % len(points) else (18, 70, 88)
+        color = active if index == frame_index % len(points) else dim
         fill_rect(draw, x, y, x + 1, y + 1, color)
-    fill_rect(draw, 4, 4, 5, 5, BADGE_BLUE)
+    fill_rect(draw, 4, 4, 5, 5, base)
+
+
+def working_badge_colors(backend: str | None) -> tuple[tuple[int, int, int], tuple[int, int, int]]:
+    if backend == "codex":
+        return BADGE_RED, BADGE_RED
+    if backend == "opencode":
+        return BADGE_ORANGE, BADGE_ORANGE
+    return BADGE_BLUE, BADGE_BLUE
+
+
+def _dim(color: tuple[int, int, int]) -> tuple[int, int, int]:
+    return tuple(max(0, round(channel * 0.25)) for channel in color)
 
 
 def draw_idle_badge(draw: object, frame_index: int) -> None:

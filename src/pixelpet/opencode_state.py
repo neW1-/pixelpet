@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Callable
 
@@ -61,10 +61,11 @@ class OpencodeStateReader:
                 Status.FAILED_OFFLINE,
                 f"OpenCode state unavailable: {exc}",
                 activity="FAILED",
+                backend="opencode",
             )
 
         if not sessions:
-            return StatusSnapshot(Status.IDLE, "No OpenCode sessions found.", activity="IDLE")
+            return StatusSnapshot(Status.IDLE, "No OpenCode sessions found.", activity="IDLE", backend="opencode")
 
         now = self._now_ms()
         snapshots = [
@@ -78,7 +79,10 @@ class OpencodeStateReader:
             )
             for session in sessions
         ]
-        return max(snapshots, key=opencode_status_sort_key)
+        return replace(
+            max(snapshots, key=opencode_status_sort_key),
+            backend="opencode",
+        )
 
     def _read_state(
         self,

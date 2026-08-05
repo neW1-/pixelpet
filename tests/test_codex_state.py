@@ -284,6 +284,23 @@ class CodexStateReaderTest(unittest.TestCase):
 
             self.assertEqual(reader.current_status().status, Status.FAILED_OFFLINE)
 
+    def test_tokens_used_populates_usage(self) -> None:
+        with fixture() as fx:
+            rollout = fx.rollout(
+                event("event_msg", {"type": "task_started"}, NOW_MS - 5_000),
+                event("event_msg", {"type": "task_complete"}, NOW_MS - 3_000),
+            )
+            fx.thread("t1", rollout, tokens_used=42_000)
+
+            status = fx.reader().current_status()
+
+            self.assertEqual(status.status, Status.DONE)
+            self.assertIsNotNone(status.usage)
+            assert status.usage is not None
+            self.assertEqual(status.usage.value, 42_000)
+            self.assertEqual(status.usage.display_kind, "tokens")
+            self.assertEqual(status.backend, "codex")
+
 
 class Fixture:
     def __init__(self) -> None:
@@ -316,8 +333,8 @@ class Fixture:
                   git_branch text,
                   updated_at integer,
                   updated_at_ms integer,
-                  archived integer,
-                  tokens_used integer
+                  tokens_used integer,
+                  archived integer
                 )
                 """
             )
@@ -359,8 +376,8 @@ class Fixture:
                     "main",
                     updated_at_ms // 1000,
                     updated_at_ms,
-                    0,
                     tokens_used,
+                    0,
                 ),
             )
             connection.commit()

@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import os
 import sqlite3
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
@@ -74,6 +74,7 @@ class CodexStateReader:
                 Status.FAILED_OFFLINE,
                 f"Codex state unavailable: {exc}",
                 activity="FAILED",
+                backend="codex",
             )
 
         now = self._now_ms()
@@ -87,11 +88,12 @@ class CodexStateReader:
                 Status.IDLE,
                 "No Codex Desktop threads found.",
                 activity="IDLE",
+                backend="codex",
             )
 
-        return max(
-            snapshots,
-            key=status_sort_key,
+        return replace(
+            max(snapshots, key=status_sort_key),
+            backend="codex",
         )
 
     def _read_rows(self, limit: int) -> list[ThreadRow]:
@@ -154,6 +156,7 @@ def summarize_thread(
     usage = None
     if row.tokens_used is not None:
         usage = SessionUsage(value=int(row.tokens_used), display_kind="tokens")
+    cost = _extract_codex_cost(events)
 
     permission = next((call for call in pending if is_permission_call(call)), None)
     if permission:
@@ -164,6 +167,7 @@ def summarize_thread(
             title,
             updated_at_ms,
             "NEEDS APPROVAL",
+            cost=cost,
             usage=usage,
         )
 
@@ -176,11 +180,11 @@ def summarize_thread(
             title,
             updated_at_ms,
             "WAITING INPUT",
+            cost=cost,
             usage=usage,
         )
 
     lifecycle = latest_turn_lifecycle(events)
-    cost = _extract_codex_cost(events)
     if lifecycle.terminal == "aborted":
         return StatusSnapshot(
             Status.FAILED_OFFLINE,
@@ -219,10 +223,7 @@ def summarize_thread(
             usage=usage,
         )
 
-    return StatusSnapshot(
-        Status.IDLE, "No active Codex work.", row.id, title, updated_at_ms, "IDLE",
-        cost=cost, usage=usage,
-    )
+    return StatusSnapshot(Status.IDLE, "No active Codex work.", row.id, title, updated_at_ms, "IDLE", cost=cost, usage=usage)
 
 
 def status_sort_key(snapshot: StatusSnapshot) -> tuple[int, int, int]:

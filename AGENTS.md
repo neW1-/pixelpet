@@ -7,14 +7,17 @@
 
 ## Architecture that affects edits
 - Single package: `src/pixelpet`; console entrypoint is `pixelpet.cli:main` in `pyproject.toml`.
-- Runtime flow: `src/pixelpet/cli.py` -> `src/pixelpet/daemon.py` -> backend reader (`codex_state.py` / `opencode_state.py`) -> display driver.
+- Runtime flow: `src/pixelpet/cli.py` -> `src/pixelpet/daemon.py` -> backend reader (`codex_state.py` / `opencode_state.py` / `vscode_state.py`) -> display driver.
+- Multiple backends compose via `CompositeStatusReader` in `daemon.py`; `StatusSnapshot` carries `backend`, `cost`, and `usage` fields threaded through marquee rendering.
 - Pet packs are runtime data, not docs: `assets/pets/<pet_id>/pet.json` must map every required status to real GIF files.
 
 ## Backend/config traps
-- CLI `--assistant-backend` only accepts `codex_desktop` or `opencode_cli`.
-- Config parser accepts aliases (`opencode` / `codex`) and normalizes them; CLI does not.
+- CLI `--assistant-backend` only accepts `codex_desktop`, `opencode_cli`, or `vscode_copilot`.
+- Config parser accepts aliases (`opencode` / `codex` / `vscode`) and normalizes them; CLI does not.
 - Default config path is repo-root `config.toml`; missing file falls back to `RuntimeConfig` defaults.
 - TOML strings must be quoted (`backend = "opencode_cli"`); unquoted values fail parsing.
+- `vscode_copilot` reads three VS Code session sources: `*/GitHub.copilot-chat/transcripts/*.jsonl`, `*/chatSessions/*.jsonl`, and `globalStorage/emptyWindowChatSessions/*.jsonl`; each is parsed differently (`read_jsonl_tail` events vs. `{"kind":N,"k":[...],"v":...}` mutation ops via `read_copilot_session_state`).
+- Codex token usage comes from the `threads.tokens_used` column; codex dollar cost is extracted from rollout events (may be `None`).
 
 ## Playback/hot-reload quirks
 - `pixelpet run` hot-reloads config by default; disable with `--no-hot-reload` or `[daemon].hot_reload = false`.

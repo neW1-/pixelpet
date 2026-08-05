@@ -31,9 +31,14 @@ scroll_step_px = 2
 max_frames = 72
 
 [assistant]
-backends = ["opencode", "codex_desktop"]
+# One of codex_desktop / opencode_cli / vscode_copilot, or a list to watch
+# several backends at once (most-recent active session wins).
+backend = ["codex_desktop", "opencode_cli", "vscode_copilot"]
 [codex]
 home = "/Users/martin/.codex"
 
 [opencode]
 db_path = "/Users/martin/.local/share/opencode/opencode.db"
+
+[vscode]
+user_dir = "/Users/martin/Library/Application Support/Code"

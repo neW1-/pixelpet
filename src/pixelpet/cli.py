@@ -49,9 +49,10 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--stream-frame-ms", type=int, help="Frame cadence for stream playback.")
     run.add_argument("--pet", dest="pet_id", help="Pet id to use.")
     run.add_argument("--assets-dir", type=Path, help="Directory containing pet packs.")
-    run.add_argument("--assistant-backend", action="append", choices=ASSISTANT_BACKENDS, help="Assistant backend to watch (repeatable).")
+    run.add_argument("--assistant-backend", action="append", choices=ASSISTANT_BACKENDS, help="Assistant backend(s) to watch; repeat for multiple.")
     run.add_argument("--codex-home", type=Path, help="Codex home directory.")
     run.add_argument("--opencode-db-path", type=Path, help="OpenCode SQLite database path.")
+    run.add_argument("--vscode-user-dir", type=Path, help="VS Code user data directory.")
     run.add_argument("--poll-seconds", type=float, help="Polling interval.")
     run.add_argument("--done-timeout-seconds", type=float, help="How long done stays visible.")
     run.add_argument("--no-hot-reload", action="store_true", help="Disable config hot reload while running.")
@@ -62,9 +63,10 @@ def build_parser() -> argparse.ArgumentParser:
 
     status = subparsers.add_parser("status", help="Print the current inferred assistant status once.")
     add_common_config_flags(status)
-    status.add_argument("--assistant-backend", action="append", choices=ASSISTANT_BACKENDS, help="Assistant backend to watch (repeatable).")
+    status.add_argument("--assistant-backend", action="append", choices=ASSISTANT_BACKENDS, help="Assistant backend(s) to watch; repeat for multiple.")
     status.add_argument("--codex-home", type=Path, help="Codex home directory.")
     status.add_argument("--opencode-db-path", type=Path, help="OpenCode SQLite database path.")
+    status.add_argument("--vscode-user-dir", type=Path, help="VS Code user data directory.")
     status.add_argument("--done-timeout-seconds", type=float, help="How long done stays visible.")
     status.set_defaults(func=print_status)
 
@@ -272,9 +274,10 @@ def _config_from_args(args: argparse.Namespace) -> RuntimeConfig:
         "stream_frame_ms": getattr(args, "stream_frame_ms", None),
         "pet_id": getattr(args, "pet_id", None),
         "assets_dir": getattr(args, "assets_dir", None),
-        "assistant_backends": getattr(args, "assistant_backend", None),
+        "assistant_backends": _assistant_backends_override(args),
         "codex_home": getattr(args, "codex_home", None),
         "opencode_db_path": getattr(args, "opencode_db_path", None),
+        "vscode_user_dir": getattr(args, "vscode_user_dir", None),
         "poll_seconds": getattr(args, "poll_seconds", None),
         "done_timeout_seconds": getattr(args, "done_timeout_seconds", None),
         "hot_reload": False if getattr(args, "no_hot_reload", False) else None,
@@ -282,6 +285,13 @@ def _config_from_args(args: argparse.Namespace) -> RuntimeConfig:
         "dry_run": True if getattr(args, "dry_run", False) else None,
     }
     return merge_overrides(config, **overrides)
+
+
+def _assistant_backends_override(args: argparse.Namespace) -> tuple[str, ...] | None:
+    selected = getattr(args, "assistant_backend", None)
+    if not selected:
+        return None
+    return tuple(dict.fromkeys(selected))
 
 
 if __name__ == "__main__":

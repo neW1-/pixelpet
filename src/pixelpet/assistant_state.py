@@ -23,6 +23,7 @@ class StatusSnapshot:
     cost: float | None = None
     usage: SessionUsage | None = None
     source: str = ""
+    backend: str | None = None
 
 
 class StatusReader(Protocol):

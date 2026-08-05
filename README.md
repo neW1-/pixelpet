@@ -107,7 +107,20 @@ badge_patterns = true
 
 With `badge_patterns = true`, PixelPet redraws the upper-left badge at runtime:
 orange blinks for approval, blue pulses for input, red flashes for failed/offline,
-and working uses the original rotating cyan dots.
+gone to green on done. While working, the badge color follows the active agent:
+blue for `vscode_copilot`, red for `codex_desktop`, orange for `opencode_cli`.
+
+### Cost / token overlay
+
+The bottom of the marquee shows usage for the active agent under `show_cost = true`:
+
+- `opencode_cli` shows a dollar `cost` (e.g. `0.42` → `0` / `42`).
+- `codex_desktop` shows raw token count from the Codex `threads.tokens_used`
+  column (e.g. `37,394` → `37` / `K`).
+- `vscode_copilot` has no usage data and draws nothing.
+
+Both values are folded into the rendered GIF cache key, so a new cost or token
+count re-renders instead of replaying a stale GIF.
 
 ## Cost / Usage Display
 
@@ -133,29 +146,42 @@ disappears when the value is zero or unavailable.
 
 ## Assistant Backends
 
-PixelPet supports two assistant state backends:
+PixelPet supports three assistant state backends:
 
 - `opencode_cli`: reads the local OpenCode SQLite database directly, across all unarchived OpenCode sessions.
-- `codex_desktop`: reads Codex Desktop state from `state_5.sqlite` under the configured Codex home.
+- `vscode_copilot`: reads VS Code Copilot agent-mode session state. VS Code
+  stores live sessions in `workspaceStorage/<hash>/chatSessions/*.jsonl`
+  (mutation logs) and `globalStorage/emptyWindowChatSessions/*.jsonl`
+  (snapshots); legacy sessions live in
+  `workspaceStorage/<hash>/GitHub.copilot-chat/transcripts/*.jsonl`. All three
+  are read under the VS Code user data directory, enriched with session metadata
+  from `globalStorage/github.copilot-chat/session-store.db`.
 
-### Single backend
+Select the backend in `config.toml`. `backend` accepts one name or a list to
+watch several at once (the most recently active session wins):
 
 ```toml
 [assistant]
-backend = "opencode_cli" # or "codex_desktop"
+backend = "codex_desktop"   # single: codex_desktop | opencode_cli | vscode_copilot
+# or watch several backends at once:
+backend = ["codex_desktop", "opencode_cli", "vscode_copilot"]
+```
 
 [codex]
 home = "/Users/martin/.codex"
 
 [opencode]
 db_path = "/Users/martin/.local/share/opencode/opencode.db"
+
+[vscode]
+user_dir = "/Users/martin/Library/Application Support/Code"
 ```
 
 ### Dual backend (cycles between both)
 
 ```toml
 [assistant]
-backends = ["opencode_cli", "codex_desktop"]
+backend = ["codex_desktop", "opencode_cli"]
 
 [codex]
 home = "/Users/martin/.codex"
@@ -170,18 +196,18 @@ most active status (highest priority, then most recent).
 TOML string values must be quoted. Use `backend = "opencode_cli"`, not
 `backend = opencode_cli`.
 
-`opencode_cli` is the default when no config file exists. It passively reads
-OpenCode state without launching `opencode` or requiring `opencode serve`.
-`pixelpet run` and `pixelpet status` also accept `--assistant-backend`
-(repeatable) and `--opencode-db-path` for temporary overrides.
+`vscode_copilot` uses the platform VS Code user data dir by default (`Code`,
+`Code - Insiders`, or `VSCodium`), which `[vscode] user_dir` overrides. Status
+mapping: an open agent turn or tool execution means `working`, a recently
+completed turn is `done`, and stale or missing sessions are `idle`. The
+transcripts record no pending-approval or waiting-input marker, so
+`vscode_copilot` never emits `permission_required` or `needs_input`.
 
-```bash
-# Single backend override
-pixelpet run --assistant-backend opencode_cli
-
-# Dual backend override
-pixelpet run --assistant-backend opencode_cli --assistant-backend codex_desktop
-```
+`codex_desktop` remains the default for existing configs. `opencode_cli`
+passively reads OpenCode state without launching `opencode` or requiring
+`opencode serve`. `pixelpet run` and `pixelpet status` also accept
+`--assistant-backend` (repeatable for multiple backends), `--opencode-db-path`,
+and `--vscode-user-dir` for temporary overrides.
 
 OpenCode status mapping uses the existing PixelPet states:
 

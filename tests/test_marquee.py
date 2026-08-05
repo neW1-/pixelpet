@@ -10,7 +10,7 @@ from PIL import Image, ImageSequence
 from pixelpet.assistant_state import SessionUsage, StatusSnapshot
 from pixelpet.config import MarqueeConfig, RuntimeConfig
 from pixelpet.daemon import PixelPetDaemon, effective_marquee_config, marquee_message
-from pixelpet.marquee import normalize_message, render_status_gif, scroll_positions
+from pixelpet.marquee import normalize_message, render_status_gif, scroll_positions, token_lines
 from pixelpet.pet_pack import PetPack
 from pixelpet.status import REQUIRED_STATUSES, Status
 
@@ -153,6 +153,65 @@ class MarqueeTest(unittest.TestCase):
 
             pixel = frames[0].getpixel((0, 0))
             self.assertGreater(pixel[0], 200)
+
+    def test_working_badge_color_follows_backend(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            base = root / "base.gif"
+            create_base_gif(base)
+
+            rendered = {}
+            for backend, expected_bright, expected_center in (
+                (None, (44, 144, 255), (44, 144, 255)),
+                ("vscode", (44, 144, 255), (44, 144, 255)),
+                ("codex", (226, 20, 32), (226, 20, 32)),
+                ("opencode", (255, 145, 35), (255, 145, 35)),
+            ):
+                out = render_status_gif(
+                    base,
+                    "test",
+                    Status.WORKING,
+                    "working",
+                    MarqueeConfig(cache_dir=root / "cache", frame_ms=40),
+                    backend=backend,
+                )
+                with Image.open(out.path) as image:
+                    frames = gif_frames(image)
+                rendered[backend] = frames[0]
+
+            self.assertEqual(rendered["codex"].getpixel((4, 4)), (226, 20, 32))
+            self.assertEqual(rendered["opencode"].getpixel((4, 4)), (255, 145, 35))
+            self.assertEqual(rendered["vscode"].getpixel((4, 4)), (44, 144, 255))
+
+    def test_token_lines(self) -> None:
+        self.assertEqual(token_lines(999), ("999", " "))
+        self.assertEqual(token_lines(37_394), ("37", "K"))
+        self.assertEqual(token_lines(818_556), ("818", "K"))
+
+    def test_rendered_gif_uses_backend_and_usage_in_cache_key(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            base = root / "base.gif"
+            create_black_gif(base)
+
+            a = render_status_gif(
+                base,
+                "test",
+                Status.DONE,
+                "DONE",
+                MarqueeConfig(cache_dir=root / "cache", frame_ms=40),
+                usage=SessionUsage(value=37_394),
+            )
+            b = render_status_gif(
+                base,
+                "test",
+                Status.DONE,
+                "DONE",
+                MarqueeConfig(cache_dir=root / "cache", frame_ms=40),
+                usage=SessionUsage(value=37_395),
+            )
+
+            self.assertNotEqual(a.key, b.key)
 
     def test_daemon_uploads_when_message_changes(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

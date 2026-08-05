@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 import os
+import platform
 import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
 
-ASSISTANT_BACKENDS: tuple[str, ...] = ("codex_desktop", "opencode_cli")
+ASSISTANT_BACKENDS: tuple[str, ...] = ("codex_desktop", "opencode_cli", "vscode_copilot")
 
 
 class ConfigError(ValueError):
@@ -24,6 +25,33 @@ def default_opencode_db_path() -> Path:
         return Path(configured).expanduser()
     data_home = Path(os.environ.get("XDG_DATA_HOME", Path.home() / ".local" / "share"))
     return (data_home / "opencode" / "opencode.db").expanduser()
+
+
+def default_vscode_user_dir() -> Path | None:
+    configured = os.environ.get("VSCODE_USER_DIR")
+    if configured:
+        return Path(configured).expanduser()
+    home = Path.home()
+    system = platform.system()
+    if system == "Darwin":
+        candidates = (
+            home / "Library" / "Application Support" / "Code",
+            home / "Library" / "Application Support" / "Code - Insiders",
+            home / "Library" / "Application Support" / "VSCodium",
+        )
+    elif system == "Windows":
+        base = Path(os.environ.get("APPDATA", home / "AppData" / "Roaming"))
+        candidates = (base / "Code", base / "Code - Insiders", base / "VSCodium")
+    else:
+        candidates = (
+            home / ".config" / "Code",
+            home / ".config" / "Code - Insiders",
+            home / ".config" / "VSCodium",
+        )
+    for candidate in candidates:
+        if (candidate / "User").exists():
+            return candidate
+    return candidates[0]
 
 
 def project_root() -> Path:
@@ -77,9 +105,10 @@ class RuntimeConfig:
     stream_frame_ms: int = 220
     pet_id: str = "dino"
     assets_dir: Path = default_assets_dir()
-    assistant_backends: tuple[str, ...] = ("opencode_cli",)
+    assistant_backends: tuple[str, ...] = ("codex_desktop",)
     codex_home: Path = default_codex_home()
     opencode_db_path: Path = default_opencode_db_path()
+    vscode_user_dir: Path | None = None
     poll_seconds: float = 3.0
     done_timeout_seconds: float = 300.0
     active_window_seconds: float = 300.0
@@ -104,6 +133,7 @@ def load_config(path: Path | None = None) -> RuntimeConfig:
     assistant = _table(data.get("assistant"))
     codex = _table(data.get("codex"))
     opencode = _table(data.get("opencode"))
+    vscode = _table(data.get("vscode"))
     marquee = _table(data.get("marquee"))
 
     return RuntimeConfig(
@@ -114,9 +144,10 @@ def load_config(path: Path | None = None) -> RuntimeConfig:
         stream_frame_ms=_optional_int(display.get("stream_frame_ms"), default=220) or 220,
         pet_id=_optional_str(pet.get("id")) or "dino",
         assets_dir=_path(pet.get("assets_dir"), default_assets_dir()),
-        assistant_backends=_assistant_backends(assistant.get("backends") if "backends" in assistant else assistant.get("backend")),
+assistant_backends=_assistant_backends(assistant.get("backend")),
         codex_home=_path(codex.get("home"), default_codex_home()),
         opencode_db_path=_path(opencode.get("db_path"), default_opencode_db_path()),
+        vscode_user_dir=_optional_path(vscode.get("user_dir")),
         poll_seconds=_optional_float(daemon.get("poll_seconds"), default=3.0),
         done_timeout_seconds=_optional_float(daemon.get("done_timeout_seconds"), default=300.0),
         active_window_seconds=_optional_float(daemon.get("active_window_seconds"), default=300.0),
@@ -153,6 +184,7 @@ def merge_overrides(config: RuntimeConfig, **overrides: Any) -> RuntimeConfig:
         "assistant_backends": config.assistant_backends,
         "codex_home": config.codex_home,
         "opencode_db_path": config.opencode_db_path,
+        "vscode_user_dir": config.vscode_user_dir,
         "poll_seconds": config.poll_seconds,
         "done_timeout_seconds": config.done_timeout_seconds,
         "active_window_seconds": config.active_window_seconds,
@@ -239,38 +271,48 @@ def _playback_mode(value: object) -> str:
 
 
 def _assistant_backends(value: object) -> tuple[str, ...]:
+    if value is None:
+        return ("codex_desktop",)
+    if isinstance(value, str):
+        items = [item.strip() for item in value.split(",")]
+    elif isinstance(value, list | tuple):
+        items = [item for item in value if isinstance(item, str)]
+    else:
+        return ("codex_desktop",)
+    backends: list[str] = []
+    for item in items:
+        if not item.strip():
+            continue
+        backend = _assistant_backend(item)
+        if backend not in backends:
+            backends.append(backend)
+    return tuple(backends) or ("codex_desktop",)
+
+
+def _assistant_backend(value: object) -> str:
+    backend = (_optional_str(value) or "codex_desktop").lower()
     aliases = {
         "codex": "codex_desktop",
         "codex-desktop": "codex_desktop",
         "opencode": "opencode_cli",
         "opencode-cli": "opencode_cli",
+        "vscode": "vscode_copilot",
+        "vscode-copilot": "vscode_copilot",
+        "vscode_copilot": "vscode_copilot",
+        "copilot": "vscode_copilot",
     }
-
-    if value is None:
-        return ("opencode_cli",)
-
-    if isinstance(value, str):
-        values = [value]
-    elif isinstance(value, list | tuple):
-        values = list(value)
-    else:
-        raise ConfigError(f"Invalid assistant backends: {value!r}")
-
-    if not values:
-        return ("opencode_cli",)
-
-    backends: list[str] = []
-    for b in values:
-        if not isinstance(b, str):
-            raise ConfigError(f"Invalid assistant backend: {b!r}")
-        normalized = aliases.get(b.lower(), b.lower())
-        if normalized not in ASSISTANT_BACKENDS:
-            allowed = ", ".join(ASSISTANT_BACKENDS)
-            raise ConfigError(f"Unknown assistant backend {normalized!r}; expected one of: {allowed}")
-        backends.append(normalized)
-    return tuple(backends)
+    backend = aliases.get(backend, backend)
+    if backend not in ASSISTANT_BACKENDS:
+        allowed = ", ".join(ASSISTANT_BACKENDS)
+        raise ConfigError(f"Unknown assistant backend {backend!r}; expected one of: {allowed}")
+    return backend
 
 
 def _path(value: object, default: Path) -> Path:
     text = _optional_str(value)
     return Path(text).expanduser() if text else default
+
+
+def _optional_path(value: object) -> Path | None:
+    text = _optional_str(value)
+    return Path(text).expanduser() if text else None
